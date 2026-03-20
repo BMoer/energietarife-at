@@ -1,0 +1,148 @@
+Analyse Energietarife Österreich — tarife.db
+Stand: 2026-03-11 | PLZ 1010 Wien | Preise brutto (inkl. MwSt.)
+=====================================================================
+
+1. ÜBERBLICK
+---------------------------------------------------------------------
+Tarife gesamt (historisch):  2.335
+Aktuelle Produkte:           173 (112 Strom, 61 Gas)
+Anbieter:                    62
+PLZ abgedeckt:               1 (1010 Wien)
+Netzgebiete:                 2 (Wiener Netze + 1 Gas-Gebiet)
+Zeitraum:                    2011-05-31 bis 2026-03-10
+
+
+2. ANBIETER NACH ENERGIETYP
+---------------------------------------------------------------------
+                Strom    Gas
+Anbieter:        57      34
+Tarife:        1.371    964
+
+29 Marken bieten sowohl Strom als auch Gas an.
+
+
+3. TARIFE PRO ANBIETER — TOP 10
+---------------------------------------------------------------------
+MAXENERGY                    414
+E.ON Energie Österreich      295
+go green energy              210
+goldgas                      203
+MONTANA                      157
+oekostrom AG                 137
+Unsere Wasserkraft           134
+Wien Energie                 134
+Grünwelt Energie              58
+Drei Energie                  49
+
+7 Marken haben nur 1 einzigen Tarifeintrag.
+
+
+4. PREISANALYSE — JAHRESKOSTEN
+---------------------------------------------------------------------
+
+STROM bei 3.500 kWh — günstigste:
+Anbieter               Produkt                        ct/kWh  Grund€  Gesamt€
+redgas                 redstrom formula web plus        6,66   39,90     273
+EnergieDirect Austria  ED Flex 1.0 Student              7,74   24,00     295
+fairnando (redgas)     fairplay Strom (2021)            7,39   47,88     307
+EnergieDirect Austria  ED Flex 1.0                      7,84   36,00     310
+ENSTROGA               EnergieFlex                      9,17   36,00     357
+
+STROM bei 3.500 kWh — teuerste:
+Anbieter               Produkt                        ct/kWh  Grund€  Gesamt€
+MAXENERGY              MAX Einfach Strom               78,00   69,96   2.800
+Grünwelt Energie       grünstrom classic               50,00   60,00   1.810
+goldgas                Strom goldgas Komfort            46,00   45,00   1.655
+MAXENERGY              MAX Einfach Strom               45,00   69,96   1.645
+MAXENERGY              MAX Einfach Strom               42,00   69,96   1.540
+
+GAS bei 15.000 kWh — günstigste:
+Anbieter               Produkt                        ct/kWh  Grund€  Gesamt€
+MAXENERGY              MAX Safety Gas                   2,90   59,88     495
+goldgas                Gas goldgas Online               3,33   40,00     540
+fairnando (redgas)     fairplay gas (2021)              3,29   47,88     541
+MAXENERGY              MAX Kombi Gas                    3,90   42,00     627
+goldgas                Gas goldgas Online               3,95   40,00     633
+
+GAS bei 15.000 kWh — teuerste:
+Anbieter               Produkt                        ct/kWh  Grund€  Gesamt€
+MAXENERGY              MAX Einfach Gas                 43,00   69,96   6.520
+oekostrom AG           biogas family 10                30,00   49,92   4.550
+goldgas                Gas goldgas Komfort             30,00   40,00   4.540
+oekostrom AG           biogas family 10                25,00   49,92   3.800
+goldgas                Gas goldgas Komfort             22,00   40,00   3.340
+
+Spreizung: Faktor 10x bei Strom, 13x bei Gas.
+
+
+5. ARBEITSPREIS-SPREAD (ct/kWh)
+---------------------------------------------------------------------
+           Min     Median   Durchschnitt   Max      Anzahl
+Strom      6,66    14,36    16,26          78,00    1.368
+Gas        2,90     7,00     7,76          43,00      964
+
+Median deutlich unter Durchschnitt → extreme Ausreißer nach oben.
+
+
+6. GRUNDGEBÜHR-TRICKS
+---------------------------------------------------------------------
+E.ON Energie Österreich hat mit 108 EUR/Jahr die höchste Grundgebühr
+(Produkt "ÖkoStrom Home & Drive"). Dafür niedrigerer Arbeitspreis
+(13,80 ct/kWh). Gesamtkosten bei 3.500 kWh: 591 EUR — Mittelfeld.
+→ E.ON versteckt Kosten in der Grundgebühr, kompensiert teilweise
+  mit niedrigerem Arbeitspreis.
+
+MAXENERGY kombiniert hohe Grundgebühr (69,96 EUR) mit den höchsten
+Arbeitspreisen (bis 78 ct/kWh) — teuerste Kombination überhaupt.
+
+
+7. ÖKOSTROM-AUFPREIS
+---------------------------------------------------------------------
+(Analyse über Produktnamen: öko, grün, green, bio)
+
+                    Strom                    Gas
+                    Öko      Standard        Öko      Standard
+Anzahl:             328      1.021           88       860
+Arbeitspreis:       16,64    16,00           9,32     7,56     ct/kWh
+Grundgebühr:        57,31    51,21           46,52    52,09    EUR/a
+
+Strom-Aufschlag:    +0,64 ct/kWh (+4%)
+Gas-Aufschlag:      +1,76 ct/kWh (+23%)
+
+→ Ökostrom bei Strom praktisch kein Aufpreis.
+→ Biogas deutlich teurer, dafür niedrigere Grundgebühr.
+
+
+8. ONLINE VS. OFFLINE (Digital-Rabatt)
+---------------------------------------------------------------------
+(Analyse über Produktnamen mit "Online" oder "Digital")
+
+                  Online-Tarife    Standard
+Anzahl:           106              1.243
+Arbeitspreis:     14,35            16,31        ct/kWh
+Grundgebühr:      49,26            52,99        EUR/a
+Jahreskosten:     552              624          EUR (3.500 kWh)
+
+→ Online-Tarife sparen ~72 EUR/Jahr (-12%).
+
+
+9. PLZ/NETZGEBIET-UNTERSCHIEDE
+---------------------------------------------------------------------
+Aktuell nur PLZ 1010 (Wien) in der Datenbank.
+Regionaler Vergleich nicht möglich.
+
+Grid Area 651 (Wiener Netze): 1.349 Strom-Tarife, Ø 618 EUR/a
+Grid Area 1001:               22 Einträge (nur Gas)
+
+→ Für PLZ-Analyse müssten weitere Gebiete gescrapt werden.
+
+
+ZUSAMMENFASSUNG
+=====================================================================
+• MAXENERGY: teuerster und auffälligster Anbieter (höchste Preise
+  + meiste Tarife), taucht aber auch als günstigster Gas-Anbieter auf
+• Online-Tarife lohnen sich klar (~72 EUR/a Ersparnis)
+• Ökostrom kostet bei Strom fast nichts extra (+4%)
+• E.ON hat höchste Grundgebühr, versteckt dort Kosten
+• Extreme Preisspreizung: Faktor 10x (Strom) bis 13x (Gas)
+• Daten nur für Wien — regionaler Vergleich noch ausstehend

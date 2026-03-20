@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Dokumentation — Energietarife Österreich</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e0e0e0;
+    --muted: #888; --accent: #5b8def; --accent2: #5befa0; --code-bg: #161822;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; color: #fff; }
+  header h1 small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 8px; }
+  nav { display: flex; gap: 20px; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 500; transition: color 0.15s; }
+  nav a:hover, nav a.active { color: var(--accent); }
+
+  .container { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  h2 { font-size: 22px; color: #fff; margin: 40px 0 12px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h2:first-of-type { border-top: none; margin-top: 0; }
+  h3 { font-size: 15px; color: var(--accent); margin: 24px 0 8px; }
+  p { color: var(--muted); line-height: 1.7; margin-bottom: 12px; }
+
+  .endpoint {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; margin: 16px 0;
+  }
+  .endpoint .method { display: inline-block; background: #1a3a2a; color: var(--accent2); font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 8px; }
+  .endpoint .path { font-family: "SF Mono", Monaco, monospace; font-size: 14px; color: #fff; }
+  .endpoint .desc { color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 8px 12px; border-bottom: 1px solid #1e2130; }
+  td code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-size: 12px; color: var(--accent); }
+
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 12px 0;
+    font-family: "SF Mono", Monaco, monospace; color: var(--text);
+  }
+
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 3px; margin-left: 8px; }
+  .badge-optional { background: #2a2d3a; color: var(--muted); }
+  .badge-default { background: #1a2a3a; color: var(--accent); }
+
+  .use-case { background: var(--surface); border-left: 3px solid var(--accent); padding: 12px 16px; margin: 12px 0; border-radius: 0 8px 8px 0; }
+  .use-case strong { color: #fff; }
+  .use-case p { margin: 4px 0; }
+
+  footer {
+    padding: 16px 24px; background: var(--surface); border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--muted); text-align: center;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Energietarife Österreich <small>API Dokumentation</small></h1>
+  <nav>
+    <a href="/">Visualisierung</a>
+    <a href="/docs" class="active">API Docs</a>
+  </nav>
+</header>
+
+<div class="container">
+
+<h2>Überblick</h2>
+<p>
+  Kostenlose REST API für österreichische Strom- und Gastarife.
+  Datenquelle ist der <a href="https://www.e-control.at/tarifkalkulator" style="color:var(--accent)">E-Control Tarifkalkulator</a>.
+  Alle Endpunkte liefern JSON, unterstützen CORS und sind öffentlich zugänglich.
+</p>
+<p>Base URL: <code style="background:var(--code-bg);padding:4px 8px;border-radius:4px;color:var(--accent2)">https://energietarife.vercel.app/api/v1</code></p>
+
+<h2>Endpunkte</h2>
+
+<div class="endpoint">
+  <span class="method">GET</span>
+  <span class="path">/api/v1/tariffs</span>
+  <div class="desc">Historische Tarifdaten aller Anbieter (Energiepreis, Grundgebühr, Gültigkeitszeitraum)</div>
+</div>
+
+<h3>Query-Parameter</h3>
+<table>
+  <tr><th>Parameter</th><th>Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>energy_type</code></td><td>string</td><td><code>POWER</code> oder <code>GAS</code> <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>brand</code></td><td>string</td><td>Filtert nach Anbieter-Name (Teilsuche) <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>from</code></td><td>date</td><td>Startdatum <code>YYYY-MM-DD</code> <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>to</code></td><td>date</td><td>Enddatum <code>YYYY-MM-DD</code> <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>min_price</code></td><td>number</td><td>Mindest-Energiepreis in ct/kWh <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>max_price</code></td><td>number</td><td>Maximal-Energiepreis in ct/kWh <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>limit</code></td><td>integer</td><td>Anzahl Ergebnisse <span class="badge badge-default">default: 1000, max: 5000</span></td></tr>
+  <tr><td><code>offset</code></td><td>integer</td><td>Ergebnisse überspringen <span class="badge badge-default">default: 0</span></td></tr>
+</table>
+
+<h3>Response-Felder</h3>
+<table>
+  <tr><th>Feld</th><th>Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>product_name</code></td><td>string</td><td>Produktbezeichnung</td></tr>
+  <tr><td><code>brand_name</code></td><td>string</td><td>Anbieter/Marke</td></tr>
+  <tr><td><code>energy_type</code></td><td>string</td><td><code>POWER</code> oder <code>GAS</code></td></tr>
+  <tr><td><code>product_validity_from</code></td><td>date</td><td>Gültig ab (YYYY-MM-DD)</td></tr>
+  <tr><td><code>energy_rate_ct_kwh</code></td><td>number</td><td>Energiepreis in Cent/kWh (netto)</td></tr>
+  <tr><td><code>energy_rate_high_ct_kwh</code></td><td>number?</td><td>HT-Preis (bei Doppeltarif)</td></tr>
+  <tr><td><code>energy_rate_low_ct_kwh</code></td><td>number?</td><td>NT-Preis (bei Doppeltarif)</td></tr>
+  <tr><td><code>base_rate_cents</code></td><td>number?</td><td>Grundgebühr in Cent/Jahr</td></tr>
+  <tr><td><code>rate_type</code></td><td>string</td><td>z.B. <code>STANDARD</code></td></tr>
+  <tr><td><code>locations</code></td><td>string?</td><td>Verfügbare Regionen</td></tr>
+</table>
+
+<h3>Beispiel</h3>
+<pre>GET /api/v1/tariffs?energy_type=POWER&brand=verbund&from=2024-01-01&limit=5
+
+{
+  "total": 12,
+  "limit": 5,
+  "offset": 0,
+  "data": [
+    {
+      "product_id": 974522,
+      "product_name": "VERBUND-Strom 07/24",
+      "brand_name": "VERBUND ",
+      "energy_type": "POWER",
+      "product_validity_from": "2024-07-22",
+      "energy_rate_ct_kwh": 15.6,
+      "base_rate_cents": 3588,
+      "rate_type": "STANDARD",
+      ...
+    }
+  ]
+}</pre>
+
+<hr style="border-color:var(--border);margin:32px 0">
+
+<div class="endpoint">
+  <span class="method">GET</span>
+  <span class="path">/api/v1/current</span>
+  <div class="desc">Aktuelle Tarife mit berechneten Jahreskosten für ein Netzgebiet</div>
+</div>
+
+<h3>Query-Parameter</h3>
+<table>
+  <tr><th>Parameter</th><th>Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>energy_type</code></td><td>string</td><td><code>POWER</code> oder <code>GAS</code> <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>brand</code></td><td>string</td><td>Anbieter-Name (Teilsuche) <span class="badge badge-optional">optional</span></td></tr>
+  <tr><td><code>limit</code></td><td>integer</td><td>Anzahl Ergebnisse <span class="badge badge-default">default: 1000</span></td></tr>
+  <tr><td><code>offset</code></td><td>integer</td><td>Ergebnisse überspringen <span class="badge badge-default">default: 0</span></td></tr>
+</table>
+
+<h3>Response-Felder (zusätzlich)</h3>
+<table>
+  <tr><th>Feld</th><th>Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>annual_eur</code></td><td>number</td><td>Berechnete Jahreskosten in EUR</td></tr>
+  <tr><td><code>annual_consumption_kwh</code></td><td>integer</td><td>Verbrauchsannahme (3500/15000 kWh)</td></tr>
+  <tr><td><code>energy_eur</code></td><td>number</td><td>Energiekosten gesamt in EUR</td></tr>
+  <tr><td><code>base_rate_eur</code></td><td>number</td><td>Grundgebühr in EUR</td></tr>
+  <tr><td><code>grid_operator_name</code></td><td>string</td><td>Netzbetreiber</td></tr>
+  <tr><td><code>price_guarantee_type</code></td><td>string?</td><td>Preisgarantie-Typ</td></tr>
+  <tr><td><code>is_certified_green</code></td><td>0/1</td><td>Ökostrom-Zertifikat</td></tr>
+</table>
+
+<hr style="border-color:var(--border);margin:32px 0">
+
+<div class="endpoint">
+  <span class="method">GET</span>
+  <span class="path">/api/v1/brands</span>
+  <div class="desc">Liste aller Energieanbieter/Marken</div>
+</div>
+
+<h3>Query-Parameter</h3>
+<table>
+  <tr><th>Parameter</th><th>Typ</th><th>Beschreibung</th></tr>
+  <tr><td><code>energy_type</code></td><td>string</td><td><code>POWER</code> oder <code>GAS</code> <span class="badge badge-optional">optional</span></td></tr>
+</table>
+
+<hr style="border-color:var(--border);margin:32px 0">
+
+<div class="endpoint">
+  <span class="method">GET</span>
+  <span class="path">/api/v1/stats</span>
+  <div class="desc">Statistiken zur Datenbank (Anzahl Tarife, Anbieter, Zeiträume)</div>
+</div>
+
+<h2>Anwendungsbeispiele</h2>
+
+<div class="use-case">
+  <strong>Energieversorger — Wettbewerbsanalyse</strong>
+  <p>Vergleichen Sie die eigenen Tarifentwicklungen mit dem Markt. Filtern Sie nach Energieart und Zeitraum, um Preistrends und Positionierung zu analysieren.</p>
+  <pre>GET /api/v1/tariffs?energy_type=POWER&from=2024-01-01&to=2025-01-01</pre>
+</div>
+
+<div class="use-case">
+  <strong>Softwarehersteller — Tarifvergleich integrieren</strong>
+  <p>Nutzen Sie die API, um aktuelle und historische Tarife in Ihre Vergleichsportale, Apps oder Beratungstools einzubinden.</p>
+  <pre>GET /api/v1/current?energy_type=POWER&limit=50</pre>
+</div>
+
+<div class="use-case">
+  <strong>Data Science — Preisanalyse</strong>
+  <p>Laden Sie den gesamten historischen Datensatz für Analysen, Forecasting oder Reporting.</p>
+  <pre>GET /api/v1/tariffs?limit=5000
+# Oder direkt als JSON-Datei:
+GET /data/historical.json</pre>
+</div>
+
+<div class="use-case">
+  <strong>Monitoring — Preisänderungen erkennen</strong>
+  <p>Überwachen Sie einen bestimmten Anbieter und erkennen Sie neue Tarifprodukte oder Preisanpassungen.</p>
+  <pre>GET /api/v1/tariffs?brand=wien%20energie&from=2025-01-01</pre>
+</div>
+
+<h2>Hinweise</h2>
+<p><strong>Rate Limiting:</strong> Kein Rate Limit. Responses werden 1h gecached (CDN).</p>
+<p><strong>CORS:</strong> Alle Origins erlaubt — direkter Aufruf aus dem Browser möglich.</p>
+<p><strong>Rohdaten:</strong> Die JSON-Dateien sind auch direkt unter <code>/data/historical.json</code>, <code>/data/current.json</code>, <code>/data/brands.json</code> und <code>/data/stats.json</code> abrufbar.</p>
+<p><strong>Datenquelle:</strong> <a href="https://www.e-control.at/tarifkalkulator" style="color:var(--accent)">E-Control Tarifkalkulator</a>. Daten werden periodisch aktualisiert.</p>
+<p><strong>Lizenz:</strong> Open Data. Quellenangabe erwünscht.</p>
+
+</div>
+
+<footer>
+  <a href="https://github.com/BMoer/energietarife_-sterreich" target="_blank">GitHub</a> &middot;
+  Datenquelle: <a href="https://www.e-control.at/tarifkalkulator" target="_blank">E-Control</a>
+</footer>
+
+</body>
+</html>

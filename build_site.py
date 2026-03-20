@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""
+Build script: exports tariff data from SQLite to JSON for the static site.
+
+Usage:
+    python3 build_site.py [--db tarife.db]
+"""
+
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+
+def export_historical(conn: sqlite3.Connection) -> list[dict]:
+    """Export historical products as JSON."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT product_id, product_name, brand_name, supplier_name, energy_type,
+               product_validity_from, regular_customers_from,
+               energy_rate_ct_kwh, energy_rate_high_ct_kwh, energy_rate_low_ct_kwh,
+               base_rate_cents, base_rate_type, rate_type, rate_zoning_type,
+               locations, grid_area_id, zip_code
+        FROM historical_products
+        WHERE energy_rate_ct_kwh IS NOT NULL AND product_validity_from IS NOT NULL
+        ORDER BY product_validity_from
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def export_current(conn: sqlite3.Connection) -> list[dict]:
+    """Export current product rates as JSON."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT
+            pr.product_id, p.product_name, p.brand_name, p.energy_type,
+            p.price_guarantee_type, p.is_online_product, p.is_certified_green,
+            pr.grid_operator_name, pr.zip_code,
+            pr.annual_gross_rate_cents / 100.0 AS annual_eur,
+            pr.avg_total_price_cent_kwh, pr.annual_consumption_kwh,
+            pr.energy_rate_total / 100.0 AS energy_eur,
+            pr.base_rate / 100.0 AS base_rate_eur,
+            pr.scraped_at
+        FROM product_rates pr
+        JOIN products p ON pr.product_id = p.id
+        WHERE pr.annual_gross_rate_cents > 0
+        ORDER BY pr.annual_gross_rate_cents
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def export_brands(conn: sqlite3.Connection) -> list[dict]:
+    """Export brands list."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT DISTINCT brand_name, supplier_name, energy_type
+        FROM brands ORDER BY brand_name
+    """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def export_stats(conn: sqlite3.Connection) -> dict:
+    """Export summary statistics."""
+    conn.row_factory = sqlite3.Row
+
+    stats = {"energy_types": {}}
+    for et in ["POWER", "GAS"]:
+        hist_count = conn.execute(
+            "SELECT COUNT(*) as c FROM historical_products WHERE energy_type = ?", (et,)
+        ).fetchone()["c"]
+        hist_brands = conn.execute(
+            "SELECT COUNT(DISTINCT brand_name) as c FROM historical_products WHERE energy_type = ?", (et,)
+        ).fetchone()["c"]
+        date_range = conn.execute(
+            "SELECT MIN(product_validity_from) as earliest, MAX(product_validity_from) as latest "
+            "FROM historical_products WHERE energy_type = ?", (et,)
+        ).fetchone()
+
+        stats["energy_types"][et] = {
+            "historical_products": hist_count,
+            "brands": hist_brands,
+            "earliest": date_range["earliest"],
+            "latest": date_range["latest"],
+        }
+
+    stats["total_historical"] = conn.execute(
+        "SELECT COUNT(*) as c FROM historical_products"
+    ).fetchone()["c"]
+
+    return stats
+
+
+def export_plz_mapping(conn: sqlite3.Connection, out_dir: Path):
+    """Export PLZ → grid area mapping as JSON. Format: { "1010": { "POWER": [651], "GAS": [1001] }, ... }"""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT zip_code, energy_type, grid_area_id, grid_operator_name "
+        "FROM plz_grid_area_mapping ORDER BY zip_code"
+    ).fetchall()
+
+    mapping = {}
+    operator_names = {}
+    for r in rows:
+        plz = r["zip_code"]
+        et = r["energy_type"]
+        ga = r["grid_area_id"]
+        if plz not in mapping:
+            mapping[plz] = {}
+        if et not in mapping[plz]:
+            mapping[plz][et] = []
+        mapping[plz][et].append(ga)
+        operator_names[ga] = r["grid_operator_name"]
+
+    output = {"mapping": mapping, "gridOperatorNames": operator_names}
+    (out_dir / "plz-mapping.json").write_text(
+        json.dumps(output, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    print(f"  plz-mapping.json: {len(mapping)} PLZs, {len(operator_names)} grid operators")
+
+
+def main():
+    db_path = sys.argv[1] if len(sys.argv) > 1 else "tarife.db"
+    out_dir = Path("public/data")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(db_path)
+
+    # Historical tariffs (main dataset for visualization)
+    historical = export_historical(conn)
+    (out_dir / "historical.json").write_text(
+        json.dumps(historical, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"  historical.json: {len(historical)} records")
+
+    # Current rates
+    current = export_current(conn)
+    (out_dir / "current.json").write_text(
+        json.dumps(current, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"  current.json: {len(current)} records")
+
+    # Brands
+    brands = export_brands(conn)
+    (out_dir / "brands.json").write_text(
+        json.dumps(brands, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"  brands.json: {len(brands)} records")
+
+    # Stats
+    stats = export_stats(conn)
+    (out_dir / "stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"  stats.json: written")
+
+    # PLZ → grid area mapping
+    export_plz_mapping(conn, out_dir)
+
+    conn.close()
+    print(f"Done! Files in {out_dir}/")
+
+
+if __name__ == "__main__":
+    main()

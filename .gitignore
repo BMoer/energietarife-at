@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+tarife.db
+tarife.db-shm
+tarife.db-wal
+node_modules/
+.vercel/

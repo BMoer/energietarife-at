@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Energietarife Österreich — Historische Strom- & Gastarife</title>
+<meta name="description" content="Interaktive Visualisierung aller österreichischen Strom- und Gastarife seit 2013. Daten von E-Control.">
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e0e0e0;
+    --muted: #888; --accent: #5b8def; --accent2: #5befa0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; color: #fff; }
+  header h1 small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 8px; }
+  nav { display: flex; gap: 20px; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 500; transition: color 0.15s; }
+  nav a:hover, nav a.active { color: var(--accent); }
+
+  /* Controls */
+  #controls {
+    display: flex; gap: 12px; padding: 10px 24px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center;
+  }
+  .filter-group { display: flex; flex-direction: column; gap: 2px; }
+  .filter-group label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .filter-group select, .filter-group input {
+    background: #252832; border: 1px solid #3a3d4a; color: var(--text);
+    padding: 5px 8px; border-radius: 5px; font-size: 12px; min-width: 140px;
+  }
+  #filter-consumption { min-width: 260px; }
+  .filter-group select:focus, .filter-group input:focus { outline: none; border-color: var(--accent); }
+
+  #stats {
+    margin-left: auto; font-size: 12px; color: var(--muted); display: flex; gap: 14px; align-items: center;
+  }
+  #stats span { color: var(--accent); font-weight: 600; }
+
+  /* Chart */
+  #chart-container { position: relative; width: 100%; height: calc(100vh - 130px); overflow: hidden; }
+
+  .tooltip {
+    position: absolute; pointer-events: none; background: #1e2130ee; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 100; max-width: 360px;
+    opacity: 0; transition: opacity 0.12s;
+  }
+  .tooltip.visible { opacity: 1; }
+  .tooltip .brand { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .tooltip .product { font-size: 12px; color: #aaa; margin-bottom: 6px; }
+  .tooltip .detail { display: flex; justify-content: space-between; gap: 20px; }
+  .tooltip .detail .label { color: var(--muted); }
+  .tooltip .detail .value { color: #fff; font-weight: 500; text-align: right; }
+  .tooltip .divider { border-top: 1px solid var(--border); margin: 4px 0; }
+
+  .legend {
+    position: absolute; top: 12px; right: 12px; background: var(--surface); opacity: 0.95;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    max-height: calc(100vh - 180px); overflow-y: auto; font-size: 11px;
+    min-width: 170px; max-width: 220px; display: none; z-index: 12;
+  }
+  .legend.open { display: block; }
+  .legend-toggle {
+    position: absolute; top: 12px; right: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--muted); cursor: pointer;
+    z-index: 11;
+  }
+  .legend-toggle:hover { color: #fff; border-color: var(--accent); }
+  .legend-item { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
+  .legend-item:hover { color: #fff; }
+  .legend-item.dimmed { opacity: 0.3; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .legend-title { font-weight: 700; margin-bottom: 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-size: 9px; }
+
+  @media (max-width: 768px) {
+    #controls { gap: 8px; padding: 8px 12px; }
+    .filter-group select, .filter-group input { min-width: 100px; font-size: 11px; }
+    #filter-consumption { min-width: 200px; }
+    #stats { display: none; }
+  }
+
+  /* Loading */
+  #loading { display: flex; align-items: center; justify-content: center; height: calc(100vh - 100px); color: var(--muted); font-size: 14px; }
+  #loading.hidden { display: none; }
+
+  /* Footer */
+  footer {
+    padding: 6px 24px;
+    background: var(--surface); border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Energietarife Österreich <small>Strom & Gas seit 2013</small></h1>
+  <nav></nav>
+</header>
+
+<div id="controls">
+  <div class="filter-group">
+    <label>Energieart</label>
+    <select id="filter-energy">
+      <option value="POWER" selected>Strom</option>
+      <option value="GAS">Gas</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Anbieter</label>
+    <select id="filter-brand">
+      <option value="ALL">Alle Anbieter</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Zeitraum</label>
+    <select id="filter-time">
+      <option value="ALL" selected>Gesamter Zeitraum</option>
+      <option value="1Y">Letztes Jahr</option>
+      <option value="2Y">Letzte 2 Jahre</option>
+      <option value="3Y">Letzte 3 Jahre</option>
+      <option value="5Y">Letzte 5 Jahre</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>PLZ</label>
+    <input type="text" id="filter-plz" placeholder="z.B. 1010" style="min-width:80px" maxlength="4" inputmode="numeric">
+  </div>
+  <div id="plz-info" style="font-size:11px;color:var(--muted);align-self:center;display:none"></div>
+  <div class="filter-group">
+    <label>Preisbereich EUR/a</label>
+    <input type="text" id="filter-price" placeholder="z.B. 500-2000" style="min-width:90px">
+  </div>
+  <div style="width:1px;height:24px;background:var(--border);align-self:center;margin:0 4px"></div>
+  <div class="filter-group">
+    <label style="color:var(--accent2)">Szenario: Verbrauch</label>
+    <select id="filter-consumption">
+    </select>
+  </div>
+  <button id="reset-filters" style="align-self:center;background:#252832;border:1px solid #3a3d4a;color:var(--muted);padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap" title="Alle Filter zurücksetzen">&#x21bb; Zurücksetzen</button>
+  <div id="stats">
+    <div><span id="stat-count">0</span> Tarife</div>
+    <div><span id="stat-brands">0</span> Anbieter</div>
+    <div><span style="display:inline-block;width:12px;height:3px;background:#50c878;vertical-align:middle;margin-right:4px;border-radius:1px"></span>Min: <span id="stat-min">-</span></div>
+    <div><span style="display:inline-block;width:12px;height:3px;background:#ffd700;vertical-align:middle;margin-right:4px;border-radius:1px"></span>Median: <span id="stat-median">-</span></div>
+    <div><span style="display:inline-block;width:12px;height:3px;background:#ef5b5b;vertical-align:middle;margin-right:4px;border-radius:1px"></span>Max: <span id="stat-max">-</span></div>
+  </div>
+</div>
+
+<div id="loading">Lade Tarifdaten...</div>
+<div id="chart-container" style="display:none">
+  <canvas id="chart"></canvas>
+  <div class="tooltip" id="tooltip"></div>
+  <button class="legend-toggle" id="legend-toggle">Anbieter &#9662;</button>
+  <div class="legend" id="legend"></div>
+</div>
+
+<footer>
+  <span>Datenquelle: <a href="https://www.e-control.at/tarifkalkulator" target="_blank">E-Control Tarifkalkulator</a></span>
+</footer>
+
+<script>
+let DATA = [];
+let brandColorMap = {};
+let currentFiltered = [];
+let highlightedBrand = null;
+let chartState = null;
+let zoomState = { xMinT: null, xMaxT: null };
+let panState = { active: false, startX: 0, startMinT: 0, startMaxT: 0 };
+let expandedGroups = new Set();
+let plzGridAreas = null; // { POWER: [gridAreaId, ...], GAS: [gridAreaId, ...] }
+let plzMapping = null; // { mapping: { "1010": { POWER: [651], GAS: [1001] } }, gridOperatorNames: { 651: "Wiener Netze" } }
+
+const COLORS = [
+  "#5b8def","#ef5b5b","#5befa0","#efcf5b","#b05bef","#ef8f5b","#5bcfef",
+  "#ef5baf","#8fef5b","#5b6fef","#efef5b","#cf5bef","#5bef6f","#ef5b6f",
+  "#5befcf","#af8f5b","#8f5bef","#5bafef","#ef5bcf","#6fef5b",
+  "#d4a574","#74d4a5","#a574d4","#d47474","#74a5d4","#d4d474","#7474d4",
+  "#d474a5","#a5d474","#74d4d4","#d4a5a5","#a5a5d4","#e8967a","#7ae8c3",
+  "#c37ae8","#e8c97a","#7a8de8","#e87aab","#9be87a","#7acfe8"
+];
+
+const CONSUMPTION_PRESETS = {
+  POWER: [
+    { value: 1500, label: "1.500 kWh — Single / Wohnung" },
+    { value: 2500, label: "2.500 kWh — Paar" },
+    { value: 3500, label: "3.500 kWh — Haushalt (3-4 Pers.)" },
+    { value: 5000, label: "5.000 kWh — Haushalt mit Wärmepumpe" },
+    { value: 7500, label: "7.500 kWh — Großer Haushalt / E-Auto" },
+  ],
+  GAS: [
+    { value: 5000, label: "5.000 kWh — Wohnung (Warmwasser)" },
+    { value: 10000, label: "10.000 kWh — Kleine Wohnung (Heizung)" },
+    { value: 15000, label: "15.000 kWh — Haushalt (Heizung)" },
+    { value: 20000, label: "20.000 kWh — Einfamilienhaus" },
+    { value: 30000, label: "30.000 kWh — Großes Einfamilienhaus" },
+  ]
+};
+
+function getConsumption() {
+  return parseInt(document.getElementById("filter-consumption").value) || 3500;
+}
+
+function populateConsumption(energyType) {
+  const sel = document.getElementById("filter-consumption");
+  const presets = CONSUMPTION_PRESETS[energyType] || CONSUMPTION_PRESETS.POWER;
+  const defaultVal = energyType === "GAS" ? 15000 : 3500;
+  sel.innerHTML = presets.map(p =>
+    `<option value="${p.value}" ${p.value === defaultVal ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+}
+
+function calcAnnualCost(d, consumption) {
+  return (d.energy_rate_ct_kwh / 100) * consumption + (d.base_rate_cents || 0) / 100;
+}
+
+function formatDateAT(isoStr) {
+  const parts = isoStr.split("-");
+  if (parts.length === 3) return parts[2] + "." + parts[1] + "." + parts[0];
+  return isoStr;
+}
+
+async function init() {
+  try {
+    const [histResp, plzResp] = await Promise.all([
+      fetch("/data/historical.json"),
+      fetch("/data/plz-mapping.json"),
+    ]);
+    DATA = await histResp.json();
+    plzMapping = await plzResp.json();
+  } catch {
+    document.getElementById("loading").textContent = "Fehler beim Laden der Daten.";
+    return;
+  }
+
+  DATA.forEach(d => {
+    d._date = d.product_validity_from ? new Date(d.product_validity_from) : null;
+  });
+  DATA = DATA.filter(d => d._date && d.energy_rate_ct_kwh != null);
+
+  document.getElementById("loading").classList.add("hidden");
+  document.getElementById("chart-container").style.display = "block";
+
+  document.getElementById("filter-energy").addEventListener("change", () => {
+    const et = document.getElementById("filter-energy").value;
+    populateConsumption(et);
+    populateBrands();
+    highlightedBrand = null;
+    update();
+  });
+
+  populateFilters();
+  bindEvents();
+  update();
+}
+
+function populateFilters() {
+  populateConsumption(document.getElementById("filter-energy").value);
+  populateBrands();
+}
+
+function populateBrands() {
+  const energyType = document.getElementById("filter-energy").value;
+  const sel = document.getElementById("filter-brand");
+  const currentVal = sel.value;
+  const allowedGridAreas = plzGridAreas ? (plzGridAreas[energyType] || []) : null;
+  const brands = [...new Set(DATA.filter(d => {
+    if (d.energy_type !== energyType) return false;
+    if (allowedGridAreas && !allowedGridAreas.includes(d.grid_area_id)) return false;
+    return true;
+  }).map(d => d.brand_name))]
+    .sort((a, b) => a.localeCompare(b, "de"));
+  sel.innerHTML = '<option value="ALL">Alle Anbieter</option>';
+  brands.forEach(b => {
+    const opt = document.createElement("option");
+    opt.value = b; opt.textContent = b;
+    sel.appendChild(opt);
+  });
+  if (brands.includes(currentVal)) sel.value = currentVal;
+}
+
+function lookupPlz(plz) {
+  const info = document.getElementById("plz-info");
+  if (!/^\d{4}$/.test(plz) || !plzMapping) {
+    plzGridAreas = null;
+    info.style.display = "none";
+    return;
+  }
+  const entry = plzMapping.mapping[plz];
+  if (!entry) {
+    info.style.display = "inline";
+    info.textContent = "PLZ " + plz + " nicht gefunden";
+    info.style.color = "#ef5b5b";
+    plzGridAreas = null;
+    return;
+  }
+  const powerAreas = entry.POWER || [];
+  const gasAreas = entry.GAS || [];
+  plzGridAreas = { POWER: powerAreas, GAS: gasAreas };
+  const allAreas = [...new Set([...powerAreas, ...gasAreas])];
+  const names = [...new Set(allAreas.map(id => plzMapping.gridOperatorNames[String(id)] || id))];
+  info.style.display = "inline";
+  info.textContent = names.join(", ");
+  info.style.color = "var(--accent2)";
+}
+
+function bindEvents() {
+  document.getElementById("filter-brand").addEventListener("change", () => { highlightedBrand = null; update(); });
+  document.getElementById("filter-time").addEventListener("change", update);
+  document.getElementById("filter-price").addEventListener("input", update);
+  document.getElementById("filter-consumption").addEventListener("input", update);
+  window.addEventListener("resize", update);
+
+  document.getElementById("filter-plz").addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    if (val.length === 0) {
+      plzGridAreas = null;
+      document.getElementById("plz-info").style.display = "none";
+      populateBrands();
+      update();
+      return;
+    }
+    if (val.length === 4) {
+      lookupPlz(val);
+      populateBrands();
+      update();
+    }
+  });
+
+  document.getElementById("legend-toggle").addEventListener("click", () => {
+    const legend = document.getElementById("legend");
+    legend.classList.toggle("open");
+    document.getElementById("legend-toggle").innerHTML = legend.classList.contains("open") ? "Anbieter &#9652;" : "Anbieter &#9662;";
+  });
+
+  const canvas = document.getElementById("chart");
+  canvas.addEventListener("mousemove", onMouseMove);
+  canvas.addEventListener("mouseleave", () => {
+    document.getElementById("tooltip").classList.remove("visible");
+  });
+
+  canvas.addEventListener("click", (e) => {
+    if (!chartState) return;
+    if (panState.wasDragging) { panState.wasDragging = false; return; }
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    let closest = null, closestDist = Infinity;
+    for (const node of chartState.nodes) {
+      const dist = Math.sqrt((mx - node.x) ** 2 + (my - node.y) ** 2);
+      if (dist < closestDist && dist < 20) { closest = node; closestDist = dist; }
+    }
+    if (!closest) return;
+    const key = closest.data._groupKey;
+    if (!key) return;
+    if (closest.data._groupSize > 1) {
+      if (expandedGroups.has(key)) expandedGroups.delete(key); else expandedGroups.add(key);
+      rerender();
+    }
+  });
+
+  canvas.addEventListener("wheel", (e) => {
+    if (!chartState || !chartState.xDomain) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const { margin, width, xDomain } = chartState;
+    const frac = Math.max(0, Math.min(1, (mx - margin.left) / width));
+    const [lo, hi] = zoomState.xMinT != null ? [zoomState.xMinT, zoomState.xMaxT] : xDomain;
+    const pivot = lo + frac * (hi - lo);
+    const factor = e.deltaY > 0 ? 1.15 : 0.87;
+    const newLo = pivot - (pivot - lo) * factor;
+    const newHi = pivot + (hi - pivot) * factor;
+    if (newHi - newLo < 86400000 * 30) return;
+    if (newHi - newLo >= xDomain[1] - xDomain[0]) {
+      zoomState.xMinT = null; zoomState.xMaxT = null;
+    } else {
+      zoomState.xMinT = Math.max(xDomain[0], newLo);
+      zoomState.xMaxT = Math.min(xDomain[1], newHi);
+    }
+    renderChart(currentFiltered);
+  }, { passive: false });
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (!chartState || !chartState.xDomain || zoomState.xMinT == null) return;
+    if (e.button !== 0) return;
+    panState = { active: true, startX: e.clientX, startMinT: zoomState.xMinT, startMaxT: zoomState.xMaxT };
+    canvas.style.cursor = "grabbing";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!panState.active || !chartState) return;
+    const dx = e.clientX - panState.startX;
+    const pxPerMs = chartState.width / (panState.startMaxT - panState.startMinT);
+    const dtMs = -dx / pxPerMs;
+    const range = panState.startMaxT - panState.startMinT;
+    let newLo = panState.startMinT + dtMs;
+    let newHi = panState.startMaxT + dtMs;
+    if (newLo < chartState.xDomain[0]) { newLo = chartState.xDomain[0]; newHi = newLo + range; }
+    if (newHi > chartState.xDomain[1]) { newHi = chartState.xDomain[1]; newLo = newHi - range; }
+    zoomState.xMinT = newLo; zoomState.xMaxT = newHi;
+    renderChart(currentFiltered);
+  });
+  window.addEventListener("mouseup", () => {
+    if (panState.active) { panState.active = false; document.getElementById("chart").style.cursor = ""; }
+  });
+
+  canvas.addEventListener("dblclick", () => {
+    zoomState.xMinT = null; zoomState.xMaxT = null;
+    renderChart(currentFiltered);
+  });
+
+  const resetBtn = document.getElementById("reset-filters");
+  resetBtn.addEventListener("click", resetAllFilters);
+  resetBtn.addEventListener("mouseenter", () => { resetBtn.style.color = "#fff"; resetBtn.style.borderColor = "var(--accent)"; });
+  resetBtn.addEventListener("mouseleave", () => { resetBtn.style.color = "var(--muted)"; resetBtn.style.borderColor = "#3a3d4a"; });
+}
+
+function resetAllFilters() {
+  document.getElementById("filter-energy").value = "POWER";
+  document.getElementById("filter-brand").value = "ALL";
+  document.getElementById("filter-time").value = "ALL";
+  document.getElementById("filter-plz").value = "";
+  document.getElementById("filter-price").value = "";
+  plzGridAreas = null;
+  document.getElementById("plz-info").style.display = "none";
+  highlightedBrand = null;
+  populateConsumption("POWER");
+  populateBrands();
+  update();
+}
+
+function getFiltered() {
+  const energy = document.getElementById("filter-energy").value;
+  const brand = document.getElementById("filter-brand").value;
+  const timeFilter = document.getElementById("filter-time").value;
+  const priceStr = document.getElementById("filter-price").value.trim();
+  const consumption = getConsumption();
+
+  let priceMin = -Infinity, priceMax = Infinity;
+  if (priceStr) {
+    const parts = priceStr.split("-").map(s => parseFloat(s.trim()));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      priceMin = parts[0]; priceMax = parts[1];
+    }
+  }
+
+  let minDate = null;
+  if (timeFilter !== "ALL") {
+    const years = parseInt(timeFilter);
+    minDate = new Date();
+    minDate.setFullYear(minDate.getFullYear() - years);
+  }
+
+  const allowedGridAreas = plzGridAreas ? (plzGridAreas[energy] || []) : null;
+
+  return DATA.filter(d => {
+    if (energy !== "ALL" && d.energy_type !== energy) return false;
+    if (brand !== "ALL" && d.brand_name !== brand) return false;
+    if (minDate && d._date < minDate) return false;
+    if (allowedGridAreas && !allowedGridAreas.includes(d.grid_area_id)) return false;
+    const annual = calcAnnualCost(d, consumption);
+    if (annual < priceMin || annual > priceMax) return false;
+    return true;
+  });
+}
+
+function buildColorMap(data) {
+  const counts = {};
+  data.forEach(d => { counts[d.brand_name] = (counts[d.brand_name] || 0) + 1; });
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  brandColorMap = {};
+  sorted.forEach(([b], i) => { brandColorMap[b] = COLORS[i % COLORS.length]; });
+}
+
+function updateStats(data) {
+  const consumption = getConsumption();
+  document.getElementById("stat-count").textContent = data.length;
+  document.getElementById("stat-brands").textContent = new Set(data.map(d => d.brand_name)).size;
+  if (data.length === 0) {
+    document.getElementById("stat-min").textContent = "-";
+    document.getElementById("stat-median").textContent = "-";
+    document.getElementById("stat-max").textContent = "-";
+    return;
+  }
+  const costs = data.map(d => calcAnnualCost(d, consumption)).sort((a, b) => a - b);
+  document.getElementById("stat-min").textContent = costs[0].toFixed(0) + " \u20ac";
+  document.getElementById("stat-max").textContent = costs[costs.length - 1].toFixed(0) + " \u20ac";
+  const mid = Math.floor(costs.length / 2);
+  const median = costs.length % 2 ? costs[mid] : (costs[mid - 1] + costs[mid]) / 2;
+  document.getElementById("stat-median").textContent = median.toFixed(0) + " \u20ac";
+}
+
+function groupKey(d) {
+  return d.product_id + "|" + d.product_validity_from;
+}
+
+function dedup(data) {
+  const consumption = getConsumption();
+  const groups = {};
+  data.forEach(d => {
+    const key = groupKey(d);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(d);
+  });
+  const result = [];
+  Object.entries(groups).forEach(([key, items]) => {
+    if (items.length === 1 || expandedGroups.has(key)) {
+      items.forEach(d => { d._groupKey = key; d._groupSize = items.length; d._isCheapest = false; });
+      result.push(...items);
+    } else {
+      items.sort((a, b) => calcAnnualCost(a, consumption) - calcAnnualCost(b, consumption));
+      const cheapest = items[0];
+      cheapest._groupKey = key;
+      cheapest._groupSize = items.length;
+      cheapest._isCheapest = true;
+      result.push(cheapest);
+    }
+  });
+  return result;
+}
+
+function update() {
+  zoomState.xMinT = null; zoomState.xMaxT = null;
+  expandedGroups.clear();
+  const data = getFiltered();
+  currentFiltered = data;
+  buildColorMap(data);
+  renderChart(dedup(data));
+  renderLegend(data);
+}
+
+function rerender() {
+  renderChart(dedup(currentFiltered));
+}
+
+function renderChart(data) {
+  const container = document.getElementById("chart-container");
+  const canvas = document.getElementById("chart");
+  const dpr = window.devicePixelRatio || 1;
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const isMobile = W < 768;
+  const margin = { top: 24, right: isMobile ? 16 : 40, bottom: 44, left: isMobile ? 50 : 72 };
+  const width = W - margin.left - margin.right;
+  const height = H - margin.top - margin.bottom;
+
+  if (data.length === 0) {
+    ctx.fillStyle = "#888"; ctx.font = "14px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("Keine Tarife gefunden", W / 2, H / 2);
+    chartState = null;
+    return;
+  }
+
+  const consumption = getConsumption();
+  const dates = data.map(d => d._date.getTime());
+  const xMinData = Math.min(...dates);
+  const xMaxData = Math.max(...dates);
+  const xPadFull = (xMaxData - xMinData) * 0.02 || 86400000 * 30;
+  const xDomain = [xMinData - xPadFull, xMaxData + xPadFull];
+  const xMin = zoomState.xMinT != null ? zoomState.xMinT : xDomain[0];
+  const xMax = zoomState.xMaxT != null ? zoomState.xMaxT : xDomain[1];
+  const xScale = t => margin.left + ((t - xMin) / (xMax - xMin)) * width;
+
+  const visibleDomain = zoomState.xMinT != null;
+  const costSource = visibleDomain
+    ? data.filter(d => { const t = d._date.getTime(); return t >= xMin && t <= xMax; })
+    : data;
+  const costs = (costSource.length > 0 ? costSource : data).map(d => calcAnnualCost(d, consumption));
+  const yMinVal = Math.floor(Math.min(...costs) / 50) * 50;
+  const yMaxVal = Math.ceil(Math.max(...costs) / 50) * 50;
+  const yPad = (yMaxVal - yMinVal) * 0.05 || 50;
+  const yScale = v => margin.top + height - ((v - (yMinVal - yPad)) / ((yMaxVal + yPad) - (yMinVal - yPad))) * height;
+
+  const nodes = data.map(d => ({
+    x: xScale(d._date.getTime()),
+    y: yScale(calcAnnualCost(d, consumption)),
+    data: d,
+  }));
+
+  chartState = { nodes, margin, width, height, W, H, xDomain, xMin, xMax };
+
+  // Grid + Y axis
+  ctx.strokeStyle = "#1e2130"; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+  const yStep = Math.max(50, Math.round((yMaxVal - yMinVal) / 8 / 50) * 50) || 50;
+  const yStart = Math.floor(yMinVal / yStep) * yStep;
+  for (let v = yStart; v <= yMaxVal + yPad; v += yStep) {
+    const y = yScale(v);
+    if (y < margin.top || y > margin.top + height) continue;
+    ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(margin.left + width, y); ctx.stroke();
+    ctx.fillStyle = "#888"; ctx.font = (isMobile ? "9px" : "11px") + " sans-serif"; ctx.textAlign = "right";
+    ctx.fillText(v.toFixed(0) + " \u20ac", margin.left - 6, y + 4);
+  }
+  ctx.setLineDash([]);
+
+  // X axis — adaptive ticks based on zoom level
+  ctx.fillStyle = "#888"; ctx.font = (isMobile ? "9px" : "11px") + " sans-serif"; ctx.textAlign = "center";
+  const xRangeMs = xMax - xMin;
+  const xRangeDays = xRangeMs / 86400000;
+  const MONTH_NAMES = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
+
+  if (xRangeDays <= 90) {
+    // Very zoomed: show individual days
+    const dayStep = xRangeDays <= 30 ? 1 : xRangeDays <= 60 ? 2 : 5;
+    const d0 = new Date(xMin); d0.setDate(d0.getDate() - 1); d0.setHours(0,0,0,0);
+    for (let dt = new Date(d0); dt.getTime() <= xMax + 86400000; dt.setDate(dt.getDate() + 1)) {
+      const t = dt.getTime();
+      const x = xScale(t);
+      if (x < margin.left || x > margin.left + width) continue;
+      const isFirst = dt.getDate() === 1;
+      if (isFirst) {
+        ctx.strokeStyle = "#2a2d3a"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+        ctx.fillText(MONTH_NAMES[dt.getMonth()] + " " + dt.getFullYear(), x, margin.top + height + 16);
+      } else if (dt.getDate() % dayStep === 0) {
+        ctx.strokeStyle = "#1a1d25"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+        ctx.fillText(dt.getDate() + ".", x, margin.top + height + 16);
+      }
+    }
+  } else if (xRangeDays <= 365 * 1.5) {
+    // Zoomed: show months with year
+    const dStart = new Date(xMin);
+    let mY = dStart.getFullYear(), mM = dStart.getMonth() - 1;
+    while (true) {
+      const t = new Date(mY, mM, 1).getTime();
+      if (t > xMax + 86400000 * 60) break;
+      const x = xScale(t);
+      if (x >= margin.left && x <= margin.left + width) {
+        const realM = ((mM % 12) + 12) % 12;
+        const realY = mY + Math.floor(mM / 12);
+        const isJan = realM === 0;
+        ctx.strokeStyle = isJan ? "#2a2d3a" : "#1a1d25"; ctx.lineWidth = isJan ? 1 : 0.5;
+        ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+        ctx.fillText(MONTH_NAMES[realM] + " " + realY, x, margin.top + height + 16);
+      }
+      mM++;
+    }
+  } else if (xRangeDays <= 365 * 4) {
+    // Medium zoom: show quarters with year
+    const yearStart = new Date(xMin).getFullYear() - 1;
+    const yearEnd = new Date(xMax).getFullYear() + 1;
+    for (let y = yearStart; y <= yearEnd + 1; y++) {
+      for (let q = 0; q < 4; q++) {
+        const t = new Date(y, q * 3, 1).getTime();
+        const x = xScale(t);
+        if (x < margin.left || x > margin.left + width) continue;
+        const isQ1 = q === 0;
+        ctx.strokeStyle = isQ1 ? "#2a2d3a" : "#1a1d25"; ctx.lineWidth = isQ1 ? 1 : 0.5;
+        ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+        ctx.fillText(isQ1 ? y.toString() : "Q" + (q + 1) + " " + y, x, margin.top + height + 16);
+      }
+    }
+  } else {
+    // Full view: years with quarter grid lines
+    const yearStart = new Date(xMin).getFullYear() - 1;
+    const yearEnd = new Date(xMax).getFullYear() + 1;
+    for (let y = yearStart; y <= yearEnd + 1; y++) {
+      const t = new Date(y, 0, 1).getTime();
+      const x = xScale(t);
+      if (x < margin.left || x > margin.left + width) continue;
+      ctx.strokeStyle = "#2a2d3a"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+      ctx.fillText(y.toString(), x, margin.top + height + 16);
+    }
+    ctx.strokeStyle = "#1a1d25"; ctx.lineWidth = 0.5;
+    for (let y = yearStart; y <= yearEnd + 1; y++) {
+      for (let q = 1; q <= 3; q++) {
+        const t = new Date(y, q * 3, 1).getTime();
+        const x = xScale(t);
+        if (x < margin.left || x > margin.left + width) continue;
+        ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, margin.top + height); ctx.stroke();
+      }
+    }
+  }
+
+  // Y label
+  ctx.save();
+  ctx.translate(16, margin.top + height / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = "#aaa"; ctx.font = (isMobile ? "10px" : "12px") + " sans-serif"; ctx.textAlign = "center";
+  ctx.fillText("Jahreskosten (EUR)", 0, 0);
+  ctx.restore();
+
+  // Bee swarm
+  const radius = Math.max(2.5, Math.min(5, 2000 / data.length));
+  nodes.sort((a, b) => a.x - b.x || a.y - b.y);
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i - 1; j >= Math.max(0, i - 60); j--) {
+      const dx = nodes[i].x - nodes[j].x;
+      const dy = nodes[i].y - nodes[j].y;
+      const minD = radius * 2 + 1;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < minD && Math.abs(dx) < minD) {
+        const nudge = (minD - dist) * 0.5;
+        nodes[i].y += nodes[i].y >= nodes[j].y ? nudge : -nudge;
+      }
+    }
+    nodes[i].y = Math.max(margin.top + radius, Math.min(margin.top + height - radius, nodes[i].y));
+    nodes[i].r = radius;
+  }
+
+  // Draw
+  nodes.forEach(node => {
+    const isHighlighted = !highlightedBrand || node.data.brand_name === highlightedBrand;
+    ctx.globalAlpha = isHighlighted ? 0.85 : 0.08;
+    ctx.fillStyle = brandColorMap[node.data.brand_name];
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0f1117"; ctx.lineWidth = 0.5;
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // Trend lines: min, median, max per month
+  const buckets = new Map();
+  data.forEach(d => {
+    const dt = d._date;
+    const key = dt.getFullYear() * 12 + dt.getMonth();
+    if (!buckets.has(key)) buckets.set(key, { t: new Date(dt.getFullYear(), dt.getMonth(), 15).getTime(), values: [] });
+    buckets.get(key).values.push(calcAnnualCost(d, consumption));
+  });
+  const sorted = [...buckets.values()].sort((a, b) => a.t - b.t);
+  sorted.forEach(b => b.values.sort((a, c) => a - c));
+  function median(arr) { const m = Math.floor(arr.length / 2); return arr.length % 2 ? arr[m] : (arr[m - 1] + arr[m]) / 2; }
+
+  function drawTrendLine(points, color, lineW, dash) {
+    if (points.length < 2) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margin.left, margin.top, width, height);
+    ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineW;
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    ctx.moveTo(xScale(points[0].t), yScale(points[0].v));
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(xScale(points[i].t), yScale(points[i].v));
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.setLineDash([]);
+  }
+
+  const minPts = sorted.map(b => ({ t: b.t, v: b.values[0] }));
+  const maxPts = sorted.map(b => ({ t: b.t, v: b.values[b.values.length - 1] }));
+  const medPts = sorted.map(b => ({ t: b.t, v: median(b.values) }));
+
+  drawTrendLine(maxPts, "rgba(239,91,91,0.7)", 2, [6, 3]);
+  drawTrendLine(medPts, "rgba(255,215,0,0.9)", 2.5, []);
+  drawTrendLine(minPts, "rgba(80,200,120,0.7)", 2, [6, 3]);
+
+  ctx.strokeStyle = "#2a2d3a"; ctx.lineWidth = 1;
+  ctx.strokeRect(margin.left, margin.top, width, height);
+
+  // Update stats based on visible (zoomed) data
+  const visibleData = zoomState.xMinT != null
+    ? data.filter(d => { const t = d._date.getTime(); return t >= xMin && t <= xMax; })
+    : data;
+  updateStats(visibleData);
+}
+
+function onMouseMove(e) {
+  if (!chartState) return;
+  const rect = e.target.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  let closest = null, closestDist = Infinity;
+  for (const node of chartState.nodes) {
+    const dist = Math.sqrt((mx - node.x) ** 2 + (my - node.y) ** 2);
+    if (dist < closestDist && dist < 20) { closest = node; closestDist = dist; }
+  }
+  const tooltip = document.getElementById("tooltip");
+  if (!closest) { tooltip.classList.remove("visible"); return; }
+  showTooltip(e, closest.data);
+}
+
+function showTooltip(e, d) {
+  const tooltip = document.getElementById("tooltip");
+  const consumption = getConsumption();
+  const energyLabel = d.energy_type === "POWER" ? "Strom" : "Gas";
+  const energyCost = (d.energy_rate_ct_kwh / 100) * consumption;
+  const baseCost = (d.base_rate_cents || 0) / 100;
+  const annualTotal = energyCost + baseCost;
+  const energyPercent = annualTotal > 0 ? ((energyCost / annualTotal) * 100).toFixed(0) : "0";
+  const basePercent = annualTotal > 0 ? ((baseCost / annualTotal) * 100).toFixed(0) : "0";
+
+  tooltip.innerHTML = `
+    <div class="brand" style="color:${brandColorMap[d.brand_name]}">${d.brand_name}</div>
+    <div class="product">${d.product_name}</div>
+    <div class="divider"></div>
+    <div class="detail"><span class="label" style="font-weight:700;color:#e0e0e0">Jahreskosten (${consumption} kWh)</span><span class="value" style="font-size:14px;font-weight:700">${annualTotal.toFixed(0)} EUR</span></div>
+    <div class="divider"></div>
+    <div class="detail"><span class="label">Arbeitspreis</span><span class="value">${d.energy_rate_ct_kwh.toFixed(2)} ct/kWh \u00d7 ${consumption.toLocaleString("de")} kWh = ${energyCost.toFixed(0)} EUR (${energyPercent}%)</span></div>
+    ${d.energy_rate_high_ct_kwh ? `<div class="detail"><span class="label">HT/NT</span><span class="value">${d.energy_rate_high_ct_kwh.toFixed(2)} / ${(d.energy_rate_low_ct_kwh||0).toFixed(2)} ct/kWh</span></div>` : ""}
+    <div class="detail"><span class="label">Grundgeb\u00fchr</span><span class="value">${baseCost.toFixed(0)} EUR/Jahr (${basePercent}%)</span></div>
+    <div class="divider"></div>
+    <div class="detail"><span class="label">G\u00fcltig ab</span><span class="value">${d.product_validity_from ? formatDateAT(d.product_validity_from) : "k.A."}</span></div>
+    <div class="detail"><span class="label">Energieart</span><span class="value">${energyLabel}</span></div>
+    <div class="detail"><span class="label">Tariftyp</span><span class="value">${d.rate_type || "k.A."}</span></div>
+    ${d.locations ? `<div class="detail"><span class="label">Verf\u00fcgbar</span><span class="value">${d.locations}</span></div>` : ""}
+    ${d.grid_area_id ? `<div class="detail"><span class="label">Netzgebiet</span><span class="value">${d.grid_area_id}</span></div>` : ""}
+  `;
+  tooltip.classList.add("visible");
+  const container = document.getElementById("chart-container");
+  const rect = container.getBoundingClientRect();
+  let x = e.clientX - rect.left + 14;
+  let y = e.clientY - rect.top - 10;
+  if (x + 360 > rect.width) x = e.clientX - rect.left - 376;
+  if (y + tooltip.offsetHeight > rect.height) y = rect.height - tooltip.offsetHeight - 8;
+  if (y < 0) y = 8;
+  tooltip.style.left = x + "px";
+  tooltip.style.top = y + "px";
+}
+
+function renderLegend(data) {
+  const legend = document.getElementById("legend");
+  const counts = {};
+  data.forEach(d => { counts[d.brand_name] = (counts[d.brand_name] || 0) + 1; });
+  const sorted = Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0], "de"));
+
+  let html = `<div class="legend-title">Anbieter (${sorted.length})</div>`;
+  if (highlightedBrand) {
+    html += `<div style="font-size:10px;color:var(--accent);cursor:pointer;margin-bottom:6px" id="legend-reset">\u2190 Alle anzeigen</div>`;
+  }
+  sorted.forEach(([b, cnt]) => {
+    const dimmed = highlightedBrand && b !== highlightedBrand;
+    html += `<div class="legend-item ${dimmed ? 'dimmed' : ''}" data-brand="${b}">
+      <span class="legend-dot" style="background:${brandColorMap[b]}"></span>
+      <span>${b} (${cnt})</span>
+    </div>`;
+  });
+  legend.innerHTML = html;
+
+  legend.querySelectorAll(".legend-item").forEach(item => {
+    item.addEventListener("click", () => {
+      highlightedBrand = highlightedBrand === item.dataset.brand ? null : item.dataset.brand;
+      renderChart(currentFiltered);
+      renderLegend(currentFiltered);
+    });
+  });
+  const resetBtn = document.getElementById("legend-reset");
+  if (resetBtn) resetBtn.addEventListener("click", () => {
+    highlightedBrand = null;
+    renderChart(currentFiltered);
+    renderLegend(currentFiltered);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
