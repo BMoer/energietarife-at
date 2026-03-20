@@ -18,13 +18,13 @@ Die E-Control ist Österreichs Energieregulator und veröffentlicht alle verfüg
 
 ```bash
 # Aktuelle Stromtarife abrufen
-curl "https://energietarife-at.vercel.app/api/v1/current?energy_type=POWER"
+curl "https://tarifarchiv.gridbert.at/api/v1/current?energy_type=POWER"
 
 # Gastarife filtern
-curl "https://energietarife-at.vercel.app/api/v1/current?energy_type=GAS&brand=Wien%20Energie"
+curl "https://tarifarchiv.gridbert.at/api/v1/current?energy_type=GAS&brand=Wien%20Energie"
 
 # Historische Tarife mit Preisfilter
-curl "https://energietarife-at.vercel.app/api/v1/tariffs?energy_type=POWER&max_price=20"
+curl "https://tarifarchiv.gridbert.at/api/v1/tariffs?energy_type=POWER&max_price=20"
 ```
 
 ### Selbst scrapen
@@ -50,7 +50,7 @@ Benötigt **Python 3.12+**, keine externen Pakete.
 
 ## API Referenz
 
-Basis-URL: `https://energietarife-at.vercel.app/api/v1`
+Basis-URL: `https://tarifarchiv.gridbert.at/api/v1`
 
 ### `GET /current`
 
