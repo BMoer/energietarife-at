@@ -1,0 +1,55 @@
+name: Scrape tariffs
+
+on:
+  schedule:
+    # Täglich um 06:00 UTC (08:00 Wien)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Manueller Trigger über GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # DB aus vorherigem Run wiederherstellen (falls vorhanden)
+      - name: Restore database cache
+        uses: actions/cache@v4
+        with:
+          path: tarife.db
+          key: tarife-db-${{ github.run_id }}
+          restore-keys: |
+            tarife-db-
+
+      - name: Scrape POWER tariffs (Classic + Spot)
+        run: python3 scrape_tarife.py --energy-type POWER
+
+      - name: Scrape GAS tariffs
+        run: python3 scrape_tarife.py --energy-type GAS
+
+      - name: Export to JSON
+        run: python3 build_site.py
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git diff --quiet public/data/ && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/
+          DATE=$(date -u +%Y-%m-%d)
+          git commit -m "chore(data): daily tariff scrape ${DATE}"
+          git push
