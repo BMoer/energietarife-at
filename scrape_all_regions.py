@@ -300,12 +300,12 @@ def scrape_grid_area(conn, area_info, brands_cache):
     plz = area_info["sample_plz"]
     consumption = 3500 if energy_type == "POWER" else 15000
 
-    # Check if already scraped (skip if >50 products already exist)
+    # Check if already scraped (skip if >50 products already exist, unless --force)
     existing = conn.execute(
         "SELECT COUNT(*) FROM historical_products WHERE grid_area_id=? AND energy_type=?",
         (grid_area_id, energy_type)
     ).fetchone()[0]
-    if existing > 50:
+    if existing > 50 and not getattr(scrape_grid_area, '_force', False):
         logger.info("  SKIP %s area %d (%s) — already %d products",
                      energy_type, grid_area_id, go_name, existing)
         return 0
@@ -344,6 +344,12 @@ def scrape_grid_area(conn, area_info, brands_cache):
 
 
 def main():
+    import sys
+    force = "--force" in sys.argv
+    if force:
+        scrape_grid_area._force = True
+        logger.info("Force mode: re-scraping all grid areas")
+
     logger.info("Database: %s", DB_PATH)
 
     # Phase 1: Discover all grid areas

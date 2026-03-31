@@ -7,11 +7,11 @@
       "latest": "2026-03-11"
     },
     "GAS": {
-      "historical_products": 7522,
+      "historical_products": 7633,
       "brands": 43,
       "earliest": "2011-05-31",
-      "latest": "2026-03-10"
+      "latest": "2026-03-30"
     }
   },
-  "total_historical": 24581
+  "total_historical": 24692
 }
