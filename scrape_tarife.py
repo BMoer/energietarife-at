@@ -269,12 +269,24 @@ def fetch_brands(energy_type: str, customer_group: str) -> list[dict]:
 
 def fetch_rates(energy_type: str, customer_group: str,
                 zip_code: str, grid_operator: dict,
-                consumption: int) -> dict | None:
-    """Fetch tariff rates for a specific grid area."""
+                consumption: int,
+                search_price_model: str = "CLASSIC") -> dict | None:
+    """Fetch tariff rates for a specific grid area.
+
+    Args:
+        search_price_model: "CLASSIC" for standard tariffs,
+                           "SPOT_MARKET" for spot/float tariffs (POWER only).
+    """
     grid_op_id = grid_operator["id"]
     grid_area_id = grid_operator["gridAreaId"]
 
     if energy_type == "POWER":
+        # SPOT_MARKET requires a different priceView
+        if search_price_model == "SPOT_MARKET":
+            price_view = "SPOT_MARKET_MARGIN"
+        else:
+            price_view = "EUR_PER_YEAR"
+
         payload = {
             "customerGroup": customer_group,
             "energyType": "POWER",
@@ -290,9 +302,9 @@ def fetch_rates(energy_type: str, customer_group: str,
                 "smartMeterRequestOptions": {"smartMeterSearch": False},
             },
             "comparisonOptions": {},
-            "priceView": "EUR_PER_YEAR",
+            "priceView": price_view,
             "referencePeriod": "ONE_YEAR",
-            "searchPriceModel": "CLASSIC",
+            "searchPriceModel": search_price_model,
         }
     else:
         payload = {
@@ -467,6 +479,9 @@ def scrape_energy_type(conn: sqlite3.Connection, run_id: int,
         time.sleep(0.3)
 
     # 3. Fetch rates for each grid area
+    # For POWER we query both CLASSIC and SPOT_MARKET price models
+    price_models = ["CLASSIC", "SPOT_MARKET"] if energy_type == "POWER" else ["CLASSIC"]
+
     total_products = 0
     queried_grid_areas = set()
 
@@ -479,25 +494,29 @@ def scrape_energy_type(conn: sqlite3.Connection, run_id: int,
 
         sample_plz = sorted(go["zip_codes"])[0]
 
-        logger.info("  Fetching rates for %s (grid area %d, PLZ %s)...",
-                     go["name"], grid_area_id, sample_plz)
+        for price_model in price_models:
+            model_label = f" [{price_model}]" if len(price_models) > 1 else ""
+            logger.info("  Fetching rates for %s (grid area %d, PLZ %s)%s...",
+                         go["name"], grid_area_id, sample_plz, model_label)
 
-        rate_data = fetch_rates(
-            energy_type, customer_group, sample_plz, go, default_consumption,
-        )
-
-        if rate_data and "ratedProducts" in rate_data:
-            n_products = len(rate_data["ratedProducts"])
-            total_products += n_products
-            logger.info("    -> %d products", n_products)
-            save_rates(
-                conn, run_id, rate_data, energy_type,
-                customer_group, sample_plz, grid_area_id, default_consumption,
+            rate_data = fetch_rates(
+                energy_type, customer_group, sample_plz, go, default_consumption,
+                search_price_model=price_model,
             )
-        else:
-            logger.warning("    -> No results for grid area %d", grid_area_id)
 
-        time.sleep(0.5)
+            if rate_data and "ratedProducts" in rate_data:
+                n_products = len(rate_data["ratedProducts"])
+                total_products += n_products
+                logger.info("    -> %d products", n_products)
+                save_rates(
+                    conn, run_id, rate_data, energy_type,
+                    customer_group, sample_plz, grid_area_id, default_consumption,
+                )
+            else:
+                if price_model == "CLASSIC":
+                    logger.warning("    -> No results for grid area %d", grid_area_id)
+
+            time.sleep(0.5)
 
     conn.execute(
         "UPDATE scrape_runs SET products_found = products_found + ? WHERE id = ?",

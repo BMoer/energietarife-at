@@ -5,3 +5,5 @@ tarife.db-shm
 tarife.db-wal
 node_modules/
 .vercel/
+.DS_Store
+VIERTELSTUNDENWERTE_*.csv
