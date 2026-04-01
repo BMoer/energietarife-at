@@ -169,6 +169,14 @@ def export_stats(conn: sqlite3.Connection) -> dict:
 def export_plz_mapping(conn: sqlite3.Connection, out_dir: Path):
     """Export PLZ → grid area mapping as JSON. Format: { "1010": { "POWER": [651], "GAS": [1001] }, ... }"""
     conn.row_factory = sqlite3.Row
+
+    has_table = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='plz_grid_area_mapping'"
+    ).fetchone()[0] > 0
+    if not has_table:
+        print("  plz-mapping.json: skipped (table not found)")
+        return
+
     rows = conn.execute(
         "SELECT zip_code, energy_type, grid_area_id, grid_operator_name "
         "FROM plz_grid_area_mapping ORDER BY zip_code"
