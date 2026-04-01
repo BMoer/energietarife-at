@@ -130,18 +130,27 @@ def export_stats(conn: sqlite3.Connection) -> dict:
     """Export summary statistics."""
     conn.row_factory = sqlite3.Row
 
+    has_historical = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='historical_products'"
+    ).fetchone()[0] > 0
+
     stats = {"energy_types": {}}
     for et in ["POWER", "GAS"]:
-        hist_count = conn.execute(
-            "SELECT COUNT(*) as c FROM historical_products WHERE energy_type = ?", (et,)
-        ).fetchone()["c"]
-        hist_brands = conn.execute(
-            "SELECT COUNT(DISTINCT brand_name) as c FROM historical_products WHERE energy_type = ?", (et,)
-        ).fetchone()["c"]
-        date_range = conn.execute(
-            "SELECT MIN(product_validity_from) as earliest, MAX(product_validity_from) as latest "
-            "FROM historical_products WHERE energy_type = ?", (et,)
-        ).fetchone()
+        if has_historical:
+            hist_count = conn.execute(
+                "SELECT COUNT(*) as c FROM historical_products WHERE energy_type = ?", (et,)
+            ).fetchone()["c"]
+            hist_brands = conn.execute(
+                "SELECT COUNT(DISTINCT brand_name) as c FROM historical_products WHERE energy_type = ?", (et,)
+            ).fetchone()["c"]
+            date_range = conn.execute(
+                "SELECT MIN(product_validity_from) as earliest, MAX(product_validity_from) as latest "
+                "FROM historical_products WHERE energy_type = ?", (et,)
+            ).fetchone()
+        else:
+            hist_count = 0
+            hist_brands = 0
+            date_range = {"earliest": None, "latest": None}
 
         stats["energy_types"][et] = {
             "historical_products": hist_count,
@@ -152,7 +161,7 @@ def export_stats(conn: sqlite3.Connection) -> dict:
 
     stats["total_historical"] = conn.execute(
         "SELECT COUNT(*) as c FROM historical_products"
-    ).fetchone()["c"]
+    ).fetchone()["c"] if has_historical else 0
 
     return stats
 
