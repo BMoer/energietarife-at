@@ -1,17 +1,17 @@
 {
   "energy_types": {
     "POWER": {
-      "historical_products": 17059,
-      "brands": 79,
-      "earliest": "2013-11-28",
-      "latest": "2026-03-11"
+      "historical_products": 0,
+      "brands": 0,
+      "earliest": null,
+      "latest": null
     },
     "GAS": {
-      "historical_products": 7633,
-      "brands": 43,
-      "earliest": "2011-05-31",
-      "latest": "2026-03-30"
+      "historical_products": 0,
+      "brands": 0,
+      "earliest": null,
+      "latest": null
     }
   },
-  "total_historical": 24692
+  "total_historical": 0
 }
