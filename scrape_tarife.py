@@ -7,6 +7,14 @@ Scrapt alle aktuellen Strom- und Gas-Tarife aus dem E-Control Tarifkalkulator
 
 Speichert die Ergebnisse in einer SQLite-Datenbank.
 
+Preise werden als **Einzelkomponenten** gespeichert (ct/kWh netto + Grundgebühr),
+damit Jahreskosten für beliebige Verbräuche berechnet werden können:
+
+    jahreskosten_netto = energy_ct_kwh * verbrauch_kwh + base_rate_ct_year
+    jahreskosten_brutto = jahreskosten_netto * 1.2 / 100
+
+Netzkosten werden pro Grid Area gespeichert (gleich für alle Lieferanten).
+
 Usage:
     python3 scrape_tarife.py [--db tarife.db] [--energy-type POWER|GAS|BOTH]
 """
@@ -91,6 +99,10 @@ SAMPLE_ZIP_CODES = [
     "6971", "6991",
 ]
 
+# Reference consumption for scraping (used to derive ct/kWh)
+REFERENCE_CONSUMPTION_POWER = 3500  # kWh
+REFERENCE_CONSUMPTION_GAS = 15000   # kWh
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -125,10 +137,25 @@ def api_request(path: str, method: str = "GET", data: dict | None = None) -> dic
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
-    """Initialize SQLite database with schema."""
+    """Initialize SQLite database with schema.
+
+    Handles migration from old schema (pre-v2) by dropping and recreating
+    product_rates if it has the old column layout.
+    """
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+
+    # Migration: detect old product_rates schema (has annual_gross_rate_cents
+    # but no energy_ct_kwh) and drop it so the new schema is created.
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(product_rates)").fetchall()}
+        if "annual_gross_rate_cents" in cols and "energy_ct_kwh" not in cols:
+            logger.info("Migrating: dropping old product_rates table (pre-v2 schema)")
+            conn.execute("DROP TABLE IF EXISTS product_rates")
+            conn.commit()
+    except Exception:
+        pass  # Table doesn't exist yet — fine
 
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS scrape_runs (
@@ -180,6 +207,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             product_name TEXT NOT NULL,
             brand_id INTEGER NOT NULL,
             brand_name TEXT NOT NULL,
+            supplier_name TEXT,
             product_type TEXT,
             energy_type TEXT NOT NULL,
             customer_group TEXT NOT NULL,
@@ -192,6 +220,12 @@ def init_db(db_path: str) -> sqlite3.Connection:
             last_seen TEXT NOT NULL
         );
 
+        -- Core pricing table: per-unit components for flexible cost calculation.
+        -- All prices in CENTS NETTO. Brutto = netto * 1.2 (20% USt).
+        -- Jahreskosten berechnen:
+        --   energie_netto = energy_ct_kwh * verbrauch + energy_base_ct_year
+        --   netz_netto    = grid_ct_kwh * verbrauch + grid_base_ct_year
+        --   total_brutto  = (energie_netto + netz_netto + fees_ct_year + taxes_ct_year) * 1.2 / 100
         CREATE TABLE IF NOT EXISTS product_rates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             scrape_run_id INTEGER NOT NULL,
@@ -202,32 +236,78 @@ def init_db(db_path: str) -> sqlite3.Connection:
             zip_code TEXT NOT NULL,
             energy_type TEXT NOT NULL,
             customer_group TEXT NOT NULL,
-            annual_consumption_kwh INTEGER NOT NULL,
-            annual_gross_rate_cents REAL,
-            annual_saving_cents REAL,
-            base_rate_with_tax_cents REAL,
-            avg_energy_price_cent_kwh REAL,
-            avg_total_price_cent_kwh REAL,
-            energy_rate_net_sum REAL,
-            energy_rate_total REAL,
-            base_rate REAL,
-            discount_net_sum REAL,
-            product_fee_net_sum REAL,
-            grid_rate_net_sum REAL,
-            grid_rate_total REAL,
-            grid_base_rate REAL,
-            taxes_and_levies_total REAL,
+
+            -- Per-kWh energy price (netto, cents) — derived: energy_rate_total / consumption
+            energy_ct_kwh REAL NOT NULL,
+            -- Annual energy base/fixed fee (netto, cents/year)
+            energy_base_ct_year REAL NOT NULL DEFAULT 0,
+            -- Discount (netto, cents/year, negative = savings)
+            energy_discount_ct_year REAL NOT NULL DEFAULT 0,
+            -- Product fees (Gebrauchsabgabe Energie etc., netto, cents/year)
+            energy_fees_ct_year REAL NOT NULL DEFAULT 0,
+
+            -- Reference consumption used for scraping (for verification)
+            reference_consumption_kwh INTEGER NOT NULL,
+            -- Pre-calculated totals from API (for verification, cents)
+            energy_total_netto_ct REAL,
+            annual_total_brutto_ct REAL,
+
             scraped_at TEXT NOT NULL,
             FOREIGN KEY (scrape_run_id) REFERENCES scrape_runs(id),
             FOREIGN KEY (product_id) REFERENCES products(id)
+        );
+
+        -- Grid area rates: network costs per grid area (same for all suppliers).
+        -- All prices in CENTS NETTO. One row per grid area per scrape run.
+        CREATE TABLE IF NOT EXISTS grid_area_rates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scrape_run_id INTEGER NOT NULL,
+            grid_area_id INTEGER NOT NULL,
+            grid_operator_name TEXT,
+            energy_type TEXT NOT NULL,
+
+            -- Per-kWh grid usage price (netto, cents)
+            grid_ct_kwh REAL NOT NULL,
+            -- Annual grid base fee (netto, cents/year)
+            grid_base_ct_year REAL NOT NULL DEFAULT 0,
+            -- Grid loss rate (netto, cents/year) — usually fixed
+            grid_loss_ct_year REAL NOT NULL DEFAULT 0,
+            -- Meter rate (netto, cents/year)
+            meter_ct_year REAL NOT NULL DEFAULT 0,
+            -- Grid fees (Elektrizitätsabgabe, Erneuerbaren-Förderbeitrag, etc., netto, cents/year)
+            grid_fees_ct_year REAL NOT NULL DEFAULT 0,
+
+            -- Reference consumption used for scraping
+            reference_consumption_kwh INTEGER NOT NULL,
+            -- Pre-calculated total from API (for verification, cents netto)
+            grid_total_netto_ct REAL,
+
+            scraped_at TEXT NOT NULL,
+            FOREIGN KEY (scrape_run_id) REFERENCES scrape_runs(id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_product_rates_product ON product_rates(product_id);
         CREATE INDEX IF NOT EXISTS idx_product_rates_grid_area ON product_rates(grid_area_id);
         CREATE INDEX IF NOT EXISTS idx_product_rates_scraped ON product_rates(scraped_at);
         CREATE INDEX IF NOT EXISTS idx_product_rates_energy ON product_rates(energy_type);
+        CREATE INDEX IF NOT EXISTS idx_product_rates_run ON product_rates(scrape_run_id);
         CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id);
         CREATE INDEX IF NOT EXISTS idx_products_energy ON products(energy_type);
+        CREATE INDEX IF NOT EXISTS idx_grid_area_rates_area ON grid_area_rates(grid_area_id);
+        CREATE INDEX IF NOT EXISTS idx_grid_area_rates_run ON grid_area_rates(scrape_run_id);
+
+        CREATE TABLE IF NOT EXISTS plz_grid_area_mapping (
+            zip_code TEXT NOT NULL,
+            energy_type TEXT NOT NULL,
+            grid_area_id INTEGER NOT NULL,
+            grid_operator_id INTEGER NOT NULL,
+            grid_operator_name TEXT NOT NULL,
+            PRIMARY KEY (zip_code, energy_type, grid_area_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_plz_mapping_zip
+            ON plz_grid_area_mapping(zip_code);
+        CREATE INDEX IF NOT EXISTS idx_plz_mapping_grid_area
+            ON plz_grid_area_mapping(grid_area_id);
     """)
 
     conn.commit()
@@ -382,24 +462,34 @@ def save_brands(conn: sqlite3.Connection, brands: list[dict],
 def save_rates(conn: sqlite3.Connection, run_id: int, rate_data: dict,
                energy_type: str, customer_group: str,
                zip_code: str, grid_area_id: int, consumption: int):
-    """Save rate results to database."""
+    """Extract per-unit pricing and save to database.
+
+    Derives ct/kWh from API totals:
+        energy_ct_kwh = energy_rate_total / consumption
+        energy_base_ct_year = base_rate
+    """
     now = datetime.now(timezone.utc).isoformat()
     grid_op_name = rate_data.get("gridOperatorName", "")
+
+    # Track if we've saved grid rates for this call already
+    grid_saved = False
 
     for p in rate_data.get("ratedProducts", []):
         # Save/update product
         conn.execute("""
             INSERT INTO products (id, association_id, product_name, brand_id, brand_name,
-                                  product_type, energy_type, customer_group,
+                                  supplier_name, product_type, energy_type, customer_group,
                                   price_guarantee_type, price_model,
                                   is_online_product, is_certified_green,
                                   first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                product_name=excluded.product_name, last_seen=excluded.last_seen
+                product_name=excluded.product_name, supplier_name=excluded.supplier_name,
+                last_seen=excluded.last_seen
         """, (
             p["id"], p.get("associationId"), p["productName"],
-            p["brandId"], p["brandName"], p.get("productType"),
+            p["brandId"], p["brandName"], p.get("supplierName"),
+            p.get("productType"),
             energy_type, customer_group,
             p.get("priceGuaranteeType"), p.get("priceModel"),
             1 if p.get("isOnlineProduct") else 0,
@@ -407,40 +497,81 @@ def save_rates(conn: sqlite3.Connection, run_id: int, rate_data: dict,
             now, now,
         ))
 
-        # Extract cost breakdown
-        energy_costs = p.get("calculatedProductEnergyCosts", {}) or {}
-        grid_costs = p.get("calculatedGridCosts", {}) or {}
-        taxes = p.get("calculatedTaxesAndLevies", {}) or {}
+        # --- Extract energy cost components ---
+        energy_costs = p.get("calculatedProductEnergyCosts") or {}
+
+        energy_rate_total = energy_costs.get("energyRateTotal") or 0  # kWh-dependent, cents netto
+        base_rate = energy_costs.get("baseRate") or 0                 # fixed annual, cents netto
+        discount = energy_costs.get("discountNetSum") or 0            # discount, cents netto
+        product_fees = energy_costs.get("productFeeNetSum") or 0      # fees (Gebrauchsabgabe etc.)
+        energy_net_sum = energy_costs.get("energyRateNetSum") or 0    # total energy netto
+
+        # Derive ct/kWh (netto)
+        if consumption > 0 and energy_rate_total > 0:
+            energy_ct_kwh = energy_rate_total / consumption
+        else:
+            energy_ct_kwh = 0.0
 
         conn.execute("""
             INSERT INTO product_rates (
                 scrape_run_id, product_id, association_id,
                 grid_area_id, grid_operator_name, zip_code,
-                energy_type, customer_group, annual_consumption_kwh,
-                annual_gross_rate_cents, annual_saving_cents,
-                base_rate_with_tax_cents, avg_energy_price_cent_kwh,
-                avg_total_price_cent_kwh,
-                energy_rate_net_sum, energy_rate_total, base_rate,
-                discount_net_sum, product_fee_net_sum,
-                grid_rate_net_sum, grid_rate_total, grid_base_rate,
-                taxes_and_levies_total,
+                energy_type, customer_group,
+                energy_ct_kwh, energy_base_ct_year,
+                energy_discount_ct_year, energy_fees_ct_year,
+                reference_consumption_kwh,
+                energy_total_netto_ct, annual_total_brutto_ct,
                 scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run_id, p["id"], p.get("associationId"),
             grid_area_id, grid_op_name, zip_code,
-            energy_type, customer_group, consumption,
-            p.get("annualGrossRate"), p.get("annualSaving"),
-            p.get("baseRateWithTax"), p.get("averageEnergyPriceInCentKWh"),
-            p.get("averageTotalPriceInCentKWh"),
-            energy_costs.get("energyRateNetSum"), energy_costs.get("energyRateTotal"),
-            energy_costs.get("baseRate"),
-            energy_costs.get("discountNetSum"), energy_costs.get("productFeeNetSum"),
-            grid_costs.get("gridRateNetSum"), grid_costs.get("gridRateTotal"),
-            grid_costs.get("baseRate"),
-            taxes.get("totalPrice"),
+            energy_type, customer_group,
+            round(energy_ct_kwh, 6),
+            round(base_rate, 2),
+            round(discount, 2),
+            round(product_fees, 2),
+            consumption,
+            round(energy_net_sum, 2),
+            round(p.get("annualGrossRate") or 0, 2),
             now,
         ))
+
+        # --- Extract grid costs (once per grid area, from first product) ---
+        if not grid_saved:
+            grid_costs = p.get("calculatedGridCosts") or {}
+            grid_usage = grid_costs.get("gridUsageRate") or 0      # kWh-dependent, cents netto
+            grid_base = grid_costs.get("gridBaseRate") or 0        # fixed annual, cents netto
+            grid_loss = grid_costs.get("gridLossRate") or 0        # loss rate, cents netto
+            meter_rate = grid_costs.get("meterRateNetSum") or 0    # meter, cents netto
+            grid_fee_sum = grid_costs.get("gridFeeNetSum") or 0    # all grid fees, cents netto
+            grid_net_sum = grid_costs.get("gridCostsNetSum") or 0  # total grid netto
+
+            if consumption > 0 and grid_usage > 0:
+                grid_ct_kwh = grid_usage / consumption
+            else:
+                grid_ct_kwh = 0.0
+
+            conn.execute("""
+                INSERT INTO grid_area_rates (
+                    scrape_run_id, grid_area_id, grid_operator_name, energy_type,
+                    grid_ct_kwh, grid_base_ct_year, grid_loss_ct_year,
+                    meter_ct_year, grid_fees_ct_year,
+                    reference_consumption_kwh, grid_total_netto_ct,
+                    scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                run_id, grid_area_id, grid_op_name, energy_type,
+                round(grid_ct_kwh, 6),
+                round(grid_base, 2),
+                round(grid_loss, 2),
+                round(meter_rate, 2),
+                round(grid_fee_sum, 2),
+                consumption,
+                round(grid_net_sum, 2),
+                now,
+            ))
+            grid_saved = True
 
     conn.commit()
 
@@ -449,9 +580,13 @@ def scrape_energy_type(conn: sqlite3.Connection, run_id: int,
                        energy_type: str, zip_codes: list[str]):
     """Scrape all tariffs for one energy type."""
     customer_group = "HOME"
-    default_consumption = 3500 if energy_type == "POWER" else 15000
+    if energy_type == "POWER":
+        default_consumption = REFERENCE_CONSUMPTION_POWER
+    else:
+        default_consumption = REFERENCE_CONSUMPTION_GAS
 
-    logger.info("=== Scraping %s tariffs ===", energy_type)
+    logger.info("=== Scraping %s tariffs (reference: %d kWh) ===",
+                energy_type, default_consumption)
 
     # 1. Discover grid operators
     logger.info("Discovering grid operators for %s...", energy_type)
@@ -570,10 +705,15 @@ def main():
                 run_id, row[0], row[1], row[2])
 
     total_products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-    total_rates = conn.execute("SELECT COUNT(*) FROM product_rates").fetchone()[0]
+    total_rates = conn.execute(
+        "SELECT COUNT(*) FROM product_rates WHERE scrape_run_id = ?", (run_id,)
+    ).fetchone()[0]
+    total_grid = conn.execute(
+        "SELECT COUNT(*) FROM grid_area_rates WHERE scrape_run_id = ?", (run_id,)
+    ).fetchone()[0]
     total_brands = conn.execute("SELECT COUNT(*) FROM brands").fetchone()[0]
-    logger.info("Database totals: %d brands, %d products, %d rate entries",
-                total_brands, total_products, total_rates)
+    logger.info("Database totals: %d brands, %d products, %d product rates, %d grid area rates",
+                total_brands, total_products, total_rates, total_grid)
 
     conn.close()
 

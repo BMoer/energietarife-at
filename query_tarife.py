@@ -11,7 +11,7 @@ Commands:
     brands           - List all brands/suppliers
     grid-operators   - List all grid operators
     search           - Search products by name
-    compare          - Compare tariffs for a ZIP code
+    compare          - Compare tariffs for a ZIP code and custom kWh
 """
 
 import argparse
@@ -24,6 +24,35 @@ def get_conn(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _get_latest_run_id(conn: sqlite3.Connection) -> int | None:
+    """Get the latest completed scrape run ID."""
+    row = conn.execute(
+        "SELECT id FROM scrape_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def _get_grid_area_for_plz(conn: sqlite3.Connection, zip_code: str, energy_type: str) -> int | None:
+    """Resolve PLZ → grid_area_id via plz_grid_area_mapping or grid_operator_zip_codes."""
+    # Try plz_grid_area_mapping first (most complete)
+    row = conn.execute(
+        "SELECT grid_area_id FROM plz_grid_area_mapping WHERE zip_code = ? AND energy_type = ? LIMIT 1",
+        (zip_code, energy_type),
+    ).fetchone()
+    if row:
+        return row["grid_area_id"]
+
+    # Fallback: grid_operator_zip_codes → grid_operators
+    row = conn.execute("""
+        SELECT go.grid_area_id
+        FROM grid_operator_zip_codes gz
+        JOIN grid_operators go ON gz.grid_operator_id = go.id AND gz.energy_type = go.energy_type
+        WHERE gz.zip_code = ? AND gz.energy_type = ?
+        LIMIT 1
+    """, (zip_code, energy_type)).fetchone()
+    return row["grid_area_id"] if row else None
 
 
 def cmd_summary(conn: sqlite3.Connection):
@@ -43,13 +72,20 @@ def cmd_summary(conn: sqlite3.Connection):
         n_rates = conn.execute(
             "SELECT COUNT(*) FROM product_rates WHERE energy_type = ?", (energy,)
         ).fetchone()[0]
+        n_grid_rates = conn.execute(
+            "SELECT COUNT(*) FROM grid_area_rates WHERE energy_type = ?", (energy,)
+        ).fetchone()[0]
 
         print(f"{label}:")
         print(f"  Anbieter (Brands): {n_brands}")
         print(f"  Produkte:          {n_products}")
         print(f"  Netzbetreiber:     {n_grid_ops}")
-        print(f"  Tarifeinträge:     {n_rates}")
+        print(f"  Tarif-Rates:       {n_rates}")
+        print(f"  Netz-Rates:        {n_grid_rates}")
         print()
+
+    n_plz = conn.execute("SELECT COUNT(DISTINCT zip_code) FROM plz_grid_area_mapping").fetchone()[0]
+    print(f"PLZ-Mapping: {n_plz} PLZ\n")
 
     runs = conn.execute(
         "SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 5"
@@ -64,39 +100,66 @@ def cmd_summary(conn: sqlite3.Connection):
                   f"{r['products_found']} Tarife")
 
 
-def cmd_cheapest(conn: sqlite3.Connection, energy_type: str, n: int = 10):
+def cmd_cheapest(conn: sqlite3.Connection, energy_type: str, n: int = 10, kwh: int = 3500):
     label = "Strom" if energy_type == "POWER" else "Gas"
-    print(f"\n=== Top {n} günstigste {label}-Tarife ===\n")
+    run_id = _get_latest_run_id(conn)
+    if not run_id:
+        print("Keine Scrape-Daten vorhanden.")
+        return
 
+    print(f"\n=== Top {n} günstigste {label}-Tarife ({kwh} kWh/a) ===\n")
+
+    # Calculate energy cost for given kWh, add grid costs, apply 20% VAT
     rows = conn.execute("""
         SELECT
-            pr.product_id,
-            p.product_name,
             p.brand_name,
-            pr.grid_operator_name,
-            pr.zip_code,
-            pr.annual_gross_rate_cents / 100.0 AS annual_eur,
-            pr.avg_total_price_cent_kwh,
-            pr.annual_consumption_kwh,
+            p.product_name,
+            pr.energy_ct_kwh,
+            pr.energy_base_ct_year,
+            pr.energy_fees_ct_year,
+            pr.grid_area_id,
             p.price_guarantee_type,
-            pr.scraped_at
+            p.is_certified_green
         FROM product_rates pr
         JOIN products p ON pr.product_id = p.id
-        WHERE pr.energy_type = ?
-        ORDER BY pr.annual_gross_rate_cents ASC
+        WHERE pr.scrape_run_id = ? AND pr.energy_type = ? AND pr.energy_ct_kwh > 0
+        ORDER BY (pr.energy_ct_kwh * ? + pr.energy_base_ct_year) ASC
         LIMIT ?
-    """, (energy_type, n)).fetchall()
+    """, (run_id, energy_type, kwh, n)).fetchall()
 
     for i, r in enumerate(rows, 1):
-        print(f"{i:2d}. {r['brand_name']}")
-        print(f"    Produkt:       {r['product_name']}")
-        print(f"    Jahreskosten:  {r['annual_eur']:.2f} EUR ({r['annual_consumption_kwh']} kWh)")
-        if r["avg_total_price_cent_kwh"]:
-            print(f"    Gesamtpreis:   {r['avg_total_price_cent_kwh']:.2f} ct/kWh")
-        print(f"    Netzbetreiber: {r['grid_operator_name']} (PLZ {r['zip_code']})")
-        if r["price_guarantee_type"]:
-            print(f"    Preisgarantie: {r['price_guarantee_type']}")
-        print()
+        energy_netto = r["energy_ct_kwh"] * kwh + r["energy_base_ct_year"]
+        energy_brutto = energy_netto * 1.2 / 100
+
+        # Get grid costs for this area
+        grid = conn.execute("""
+            SELECT grid_ct_kwh, grid_base_ct_year, grid_loss_ct_year,
+                   meter_ct_year, grid_fees_ct_year
+            FROM grid_area_rates
+            WHERE scrape_run_id = ? AND grid_area_id = ? AND energy_type = ?
+            LIMIT 1
+        """, (run_id, r["grid_area_id"], energy_type)).fetchone()
+
+        grid_brutto = 0
+        if grid:
+            grid_netto = (grid["grid_ct_kwh"] * kwh + grid["grid_base_ct_year"]
+                          + grid["grid_loss_ct_year"] + grid["meter_ct_year"]
+                          + grid["grid_fees_ct_year"])
+            grid_brutto = grid_netto * 1.2 / 100
+
+        total = energy_brutto + grid_brutto
+
+        guarantee = {"GUARANTEE": "Fix", "NO_GUARANTEE": "Var",
+                     "ADJUSTING": "Anp", "DYNAMIC": "Dyn"}.get(
+            r["price_guarantee_type"], "?")
+        green = "🌿" if r["is_certified_green"] else "  "
+
+        print(f"{i:3d}. {total:>8.2f} EUR/a {green} | "
+              f"{r['energy_ct_kwh']:>6.2f} ct/kWh + {r['energy_base_ct_year']/100:>5.2f}€ Basis | "
+              f"Netz {grid_brutto:>6.2f}€ | "
+              f"{r['brand_name'][:25]:<25s} | {r['product_name'][:30]:<30s} | {guarantee}")
+
+    print(f"\n{len(rows)} Tarife | Preise brutto (inkl. 20% USt)")
 
 
 def cmd_brands(conn: sqlite3.Connection, energy_type: str | None = None):
@@ -159,60 +222,71 @@ def cmd_search(conn: sqlite3.Connection, term: str):
     print(f"\n{len(rows)} Ergebnisse")
 
 
-def cmd_compare(conn: sqlite3.Connection, zip_code: str, energy_type: str):
+def cmd_compare(conn: sqlite3.Connection, zip_code: str, energy_type: str, kwh: int = 3500):
     label = "Strom" if energy_type == "POWER" else "Gas"
-    print(f"\n=== {label}-Tarife für PLZ {zip_code} ===\n")
+    run_id = _get_latest_run_id(conn)
+    if not run_id:
+        print("Keine Scrape-Daten vorhanden.")
+        return
 
+    grid_area_id = _get_grid_area_for_plz(conn, zip_code, energy_type)
+    if not grid_area_id:
+        print(f"PLZ {zip_code} nicht gefunden. Bitte scrape_plz_mapping.py ausführen.")
+        return
+
+    print(f"\n=== {label}-Tarife für PLZ {zip_code} ({kwh} kWh/a) ===\n")
+
+    # Get grid costs for this area
+    grid = conn.execute("""
+        SELECT grid_ct_kwh, grid_base_ct_year, grid_loss_ct_year,
+               meter_ct_year, grid_fees_ct_year, grid_operator_name
+        FROM grid_area_rates
+        WHERE scrape_run_id = ? AND grid_area_id = ? AND energy_type = ?
+        LIMIT 1
+    """, (run_id, grid_area_id, energy_type)).fetchone()
+
+    grid_brutto = 0
+    if grid:
+        grid_netto = (grid["grid_ct_kwh"] * kwh + grid["grid_base_ct_year"]
+                      + grid["grid_loss_ct_year"] + grid["meter_ct_year"]
+                      + grid["grid_fees_ct_year"])
+        grid_brutto = grid_netto * 1.2 / 100
+        print(f"Netzbetreiber: {grid['grid_operator_name']}")
+        print(f"Netzkosten:    {grid_brutto:.2f} EUR/a brutto "
+              f"({grid['grid_ct_kwh']:.4f} ct/kWh + {grid['grid_base_ct_year']/100:.2f}€ Basis)\n")
+
+    # Get all tariffs for this grid area, sorted by calculated cost
     rows = conn.execute("""
         SELECT
             p.brand_name,
             p.product_name,
-            pr.annual_gross_rate_cents / 100.0 AS annual_eur,
-            pr.avg_total_price_cent_kwh,
-            pr.annual_consumption_kwh,
+            pr.energy_ct_kwh,
+            pr.energy_base_ct_year,
             p.price_guarantee_type,
-            pr.energy_rate_total / 100.0 AS energy_eur,
-            pr.grid_rate_total / 100.0 AS grid_eur,
-            pr.taxes_and_levies_total / 100.0 AS taxes_eur
+            p.is_certified_green
         FROM product_rates pr
         JOIN products p ON pr.product_id = p.id
-        WHERE pr.zip_code = ? AND pr.energy_type = ?
-        ORDER BY pr.annual_gross_rate_cents ASC
-    """, (zip_code, energy_type)).fetchall()
-
-    if not rows:
-        # Try finding rates for the same grid area
-        go = conn.execute("""
-            SELECT grid_area_id, grid_operator_id FROM grid_operator_zip_codes gz
-            JOIN grid_operators go ON gz.grid_operator_id = go.id AND gz.energy_type = go.energy_type
-            WHERE gz.zip_code = ? AND gz.energy_type = ?
-        """, (zip_code, energy_type)).fetchone()
-
-        if go:
-            rows = conn.execute("""
-                SELECT
-                    p.brand_name, p.product_name,
-                    pr.annual_gross_rate_cents / 100.0 AS annual_eur,
-                    pr.avg_total_price_cent_kwh,
-                    pr.annual_consumption_kwh,
-                    p.price_guarantee_type,
-                    pr.energy_rate_total / 100.0 AS energy_eur,
-                    pr.grid_rate_total / 100.0 AS grid_eur,
-                    pr.taxes_and_levies_total / 100.0 AS taxes_eur
-                FROM product_rates pr
-                JOIN products p ON pr.product_id = p.id
-                WHERE pr.grid_area_id = ? AND pr.energy_type = ?
-                ORDER BY pr.annual_gross_rate_cents ASC
-            """, (go["grid_area_id"], energy_type)).fetchall()
+        WHERE pr.scrape_run_id = ? AND pr.grid_area_id = ? AND pr.energy_type = ?
+              AND pr.energy_ct_kwh > 0
+        ORDER BY (pr.energy_ct_kwh * ? + pr.energy_base_ct_year) ASC
+    """, (run_id, grid_area_id, energy_type, kwh)).fetchall()
 
     for i, r in enumerate(rows, 1):
-        guarantee = {"GUARANTEE": "Fix", "NO_GUARANTEE": "Variabel",
-                     "ADJUSTING": "Anpassend", "DYNAMIC": "Dynamisch"}.get(
-            r["price_guarantee_type"], r["price_guarantee_type"] or "-")
-        print(f"{i:3d}. {r['annual_eur']:>8.2f} EUR/a | "
-              f"{r['brand_name']:30s} | {r['product_name']:35s} | {guarantee}")
+        energy_netto = r["energy_ct_kwh"] * kwh + r["energy_base_ct_year"]
+        energy_brutto = energy_netto * 1.2 / 100
+        total = energy_brutto + grid_brutto
 
-    print(f"\n{len(rows)} Tarife ({rows[0]['annual_consumption_kwh'] if rows else '?'} kWh/a)")
+        guarantee = {"GUARANTEE": "Fix", "NO_GUARANTEE": "Var",
+                     "ADJUSTING": "Anp", "DYNAMIC": "Dyn"}.get(
+            r["price_guarantee_type"], "?")
+        green = "🌿" if r["is_certified_green"] else "  "
+
+        print(f"{i:3d}. {total:>8.2f} EUR/a {green} | "
+              f"Energie {energy_brutto:>7.2f}€ | "
+              f"{r['energy_ct_kwh']:>6.2f} ct/kWh + {r['energy_base_ct_year']/100:>5.2f}€ | "
+              f"{r['brand_name'][:25]:<25s} | {r['product_name'][:30]} | {guarantee}")
+
+    print(f"\n{len(rows)} Tarife | Alle Preise brutto (inkl. 20% USt)")
 
 
 def main():
@@ -225,6 +299,7 @@ def main():
     p_cheap = sub.add_parser("cheapest")
     p_cheap.add_argument("--energy-type", choices=["POWER", "GAS"], default="POWER")
     p_cheap.add_argument("-n", type=int, default=10)
+    p_cheap.add_argument("--kwh", type=int, default=3500, help="Jahresverbrauch in kWh")
 
     p_brands = sub.add_parser("brands")
     p_brands.add_argument("--energy-type", choices=["POWER", "GAS"])
@@ -238,6 +313,7 @@ def main():
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("zip_code")
     p_compare.add_argument("--energy-type", choices=["POWER", "GAS"], default="POWER")
+    p_compare.add_argument("--kwh", type=int, default=3500, help="Jahresverbrauch in kWh")
 
     args = parser.parse_args()
 
@@ -251,7 +327,7 @@ def main():
         case "summary":
             cmd_summary(conn)
         case "cheapest":
-            cmd_cheapest(conn, args.energy_type, args.n)
+            cmd_cheapest(conn, args.energy_type, args.n, args.kwh)
         case "brands":
             cmd_brands(conn, args.energy_type)
         case "grid-operators":
@@ -259,7 +335,7 @@ def main():
         case "search":
             cmd_search(conn, args.term)
         case "compare":
-            cmd_compare(conn, args.zip_code, args.energy_type)
+            cmd_compare(conn, args.zip_code, args.energy_type, args.kwh)
 
     conn.close()
 

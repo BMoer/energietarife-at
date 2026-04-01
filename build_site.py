@@ -42,14 +42,14 @@ def export_historical(conn: sqlite3.Connection) -> list[dict]:
                 p.id AS product_id,
                 p.product_name,
                 p.brand_name,
-                NULL AS supplier_name,
+                p.supplier_name,
                 p.energy_type,
                 substr(pr.scraped_at, 1, 10) AS product_validity_from,
                 NULL AS regular_customers_from,
-                pr.avg_energy_price_cent_kwh AS energy_rate_ct_kwh,
+                pr.energy_ct_kwh AS energy_rate_ct_kwh,
                 NULL AS energy_rate_high_ct_kwh,
                 NULL AS energy_rate_low_ct_kwh,
-                pr.base_rate AS base_rate_cents,
+                pr.energy_base_ct_year AS base_rate_cents,
                 NULL AS base_rate_type,
                 NULL AS rate_type,
                 NULL AS rate_zoning_type,
@@ -58,7 +58,7 @@ def export_historical(conn: sqlite3.Connection) -> list[dict]:
                 pr.zip_code
             FROM product_rates pr
             JOIN products p ON pr.product_id = p.id
-            WHERE pr.avg_energy_price_cent_kwh IS NOT NULL
+            WHERE pr.energy_ct_kwh > 0
               AND NOT EXISTS (
                   SELECT 1 FROM historical_products hp
                   WHERE hp.product_id = p.id AND hp.grid_area_id = pr.grid_area_id
@@ -73,14 +73,14 @@ def export_historical(conn: sqlite3.Connection) -> list[dict]:
                 p.id AS product_id,
                 p.product_name,
                 p.brand_name,
-                NULL AS supplier_name,
+                p.supplier_name,
                 p.energy_type,
                 substr(pr.scraped_at, 1, 10) AS product_validity_from,
                 NULL AS regular_customers_from,
-                pr.avg_energy_price_cent_kwh AS energy_rate_ct_kwh,
+                pr.energy_ct_kwh AS energy_rate_ct_kwh,
                 NULL AS energy_rate_high_ct_kwh,
                 NULL AS energy_rate_low_ct_kwh,
-                pr.base_rate AS base_rate_cents,
+                pr.energy_base_ct_year AS base_rate_cents,
                 NULL AS base_rate_type,
                 NULL AS rate_type,
                 NULL AS rate_zoning_type,
@@ -89,30 +89,69 @@ def export_historical(conn: sqlite3.Connection) -> list[dict]:
                 pr.zip_code
             FROM product_rates pr
             JOIN products p ON pr.product_id = p.id
-            WHERE pr.avg_energy_price_cent_kwh IS NOT NULL
+            WHERE pr.energy_ct_kwh > 0
             ORDER BY product_validity_from
         """).fetchall()
     return [dict(r) for r in rows]
 
 
 def export_current(conn: sqlite3.Connection) -> list[dict]:
-    """Export current product rates as JSON."""
+    """Export current product rates as JSON with per-unit pricing."""
     conn.row_factory = sqlite3.Row
+
+    # Get latest run ID
+    run_id = conn.execute(
+        "SELECT id FROM scrape_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not run_id:
+        return []
+    run_id = run_id["id"]
+
     rows = conn.execute("""
         SELECT
-            pr.product_id, p.product_name, p.brand_name, p.energy_type,
+            pr.product_id, p.product_name, p.brand_name, p.supplier_name,
+            p.energy_type,
             p.price_guarantee_type, p.is_online_product, p.is_certified_green,
-            pr.grid_operator_name, pr.zip_code,
-            pr.annual_gross_rate_cents / 100.0 AS annual_eur,
-            pr.avg_total_price_cent_kwh, pr.annual_consumption_kwh,
-            pr.energy_rate_total / 100.0 AS energy_eur,
-            pr.base_rate / 100.0 AS base_rate_eur,
+            pr.grid_operator_name, pr.grid_area_id, pr.zip_code,
+            pr.energy_ct_kwh,
+            pr.energy_base_ct_year / 100.0 AS energy_base_eur_year,
+            pr.energy_fees_ct_year / 100.0 AS energy_fees_eur_year,
+            pr.energy_discount_ct_year / 100.0 AS energy_discount_eur_year,
+            pr.reference_consumption_kwh,
+            pr.annual_total_brutto_ct / 100.0 AS annual_total_brutto_eur,
             pr.scraped_at
         FROM product_rates pr
         JOIN products p ON pr.product_id = p.id
-        WHERE pr.annual_gross_rate_cents > 0
-        ORDER BY pr.annual_gross_rate_cents
-    """).fetchall()
+        WHERE pr.scrape_run_id = ? AND pr.energy_ct_kwh > 0
+        ORDER BY (pr.energy_ct_kwh * pr.reference_consumption_kwh + pr.energy_base_ct_year)
+    """, (run_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def export_grid_rates(conn: sqlite3.Connection) -> list[dict]:
+    """Export grid area rates as JSON."""
+    conn.row_factory = sqlite3.Row
+
+    run_id = conn.execute(
+        "SELECT id FROM scrape_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not run_id:
+        return []
+    run_id = run_id["id"]
+
+    rows = conn.execute("""
+        SELECT
+            grid_area_id, grid_operator_name, energy_type,
+            grid_ct_kwh,
+            grid_base_ct_year / 100.0 AS grid_base_eur_year,
+            grid_loss_ct_year / 100.0 AS grid_loss_eur_year,
+            meter_ct_year / 100.0 AS meter_eur_year,
+            grid_fees_ct_year / 100.0 AS grid_fees_eur_year,
+            reference_consumption_kwh,
+            scraped_at
+        FROM grid_area_rates
+        WHERE scrape_run_id = ?
+    """, (run_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -216,12 +255,19 @@ def main():
     )
     print(f"  historical.json: {len(historical)} records")
 
-    # Current rates
+    # Current rates (with per-unit pricing)
     current = export_current(conn)
     (out_dir / "current.json").write_text(
         json.dumps(current, ensure_ascii=False), encoding="utf-8"
     )
     print(f"  current.json: {len(current)} records")
+
+    # Grid area rates
+    grid_rates = export_grid_rates(conn)
+    (out_dir / "grid-rates.json").write_text(
+        json.dumps(grid_rates, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"  grid-rates.json: {len(grid_rates)} records")
 
     # Brands
     brands = export_brands(conn)
