@@ -20,45 +20,78 @@ def export_historical(conn: sqlite3.Connection) -> list[dict]:
     before a full historical re-scrape.
     """
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT product_id, product_name, brand_name, supplier_name, energy_type,
-               product_validity_from, regular_customers_from,
-               energy_rate_ct_kwh, energy_rate_high_ct_kwh, energy_rate_low_ct_kwh,
-               base_rate_cents, base_rate_type, rate_type, rate_zoning_type,
-               locations, grid_area_id, zip_code
-        FROM historical_products
-        WHERE energy_rate_ct_kwh IS NOT NULL AND product_validity_from IS NOT NULL
 
-        UNION ALL
+    # Check if historical_products table exists (only created by scrape_all_regions.py)
+    has_historical = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='historical_products'"
+    ).fetchone()[0] > 0
 
-        SELECT
-            p.id AS product_id,
-            p.product_name,
-            p.brand_name,
-            NULL AS supplier_name,
-            p.energy_type,
-            substr(pr.scraped_at, 1, 10) AS product_validity_from,
-            NULL AS regular_customers_from,
-            pr.avg_energy_price_cent_kwh AS energy_rate_ct_kwh,
-            NULL AS energy_rate_high_ct_kwh,
-            NULL AS energy_rate_low_ct_kwh,
-            pr.base_rate AS base_rate_cents,
-            NULL AS base_rate_type,
-            NULL AS rate_type,
-            NULL AS rate_zoning_type,
-            NULL AS locations,
-            pr.grid_area_id,
-            pr.zip_code
-        FROM product_rates pr
-        JOIN products p ON pr.product_id = p.id
-        WHERE pr.avg_energy_price_cent_kwh IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM historical_products hp
-              WHERE hp.product_id = p.id AND hp.grid_area_id = pr.grid_area_id
-          )
+    if has_historical:
+        rows = conn.execute("""
+            SELECT product_id, product_name, brand_name, supplier_name, energy_type,
+                   product_validity_from, regular_customers_from,
+                   energy_rate_ct_kwh, energy_rate_high_ct_kwh, energy_rate_low_ct_kwh,
+                   base_rate_cents, base_rate_type, rate_type, rate_zoning_type,
+                   locations, grid_area_id, zip_code
+            FROM historical_products
+            WHERE energy_rate_ct_kwh IS NOT NULL AND product_validity_from IS NOT NULL
 
-        ORDER BY product_validity_from
-    """).fetchall()
+            UNION ALL
+
+            SELECT
+                p.id AS product_id,
+                p.product_name,
+                p.brand_name,
+                NULL AS supplier_name,
+                p.energy_type,
+                substr(pr.scraped_at, 1, 10) AS product_validity_from,
+                NULL AS regular_customers_from,
+                pr.avg_energy_price_cent_kwh AS energy_rate_ct_kwh,
+                NULL AS energy_rate_high_ct_kwh,
+                NULL AS energy_rate_low_ct_kwh,
+                pr.base_rate AS base_rate_cents,
+                NULL AS base_rate_type,
+                NULL AS rate_type,
+                NULL AS rate_zoning_type,
+                NULL AS locations,
+                pr.grid_area_id,
+                pr.zip_code
+            FROM product_rates pr
+            JOIN products p ON pr.product_id = p.id
+            WHERE pr.avg_energy_price_cent_kwh IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM historical_products hp
+                  WHERE hp.product_id = p.id AND hp.grid_area_id = pr.grid_area_id
+              )
+
+            ORDER BY product_validity_from
+        """).fetchall()
+    else:
+        # Fallback: only export current product_rates as historical data
+        rows = conn.execute("""
+            SELECT
+                p.id AS product_id,
+                p.product_name,
+                p.brand_name,
+                NULL AS supplier_name,
+                p.energy_type,
+                substr(pr.scraped_at, 1, 10) AS product_validity_from,
+                NULL AS regular_customers_from,
+                pr.avg_energy_price_cent_kwh AS energy_rate_ct_kwh,
+                NULL AS energy_rate_high_ct_kwh,
+                NULL AS energy_rate_low_ct_kwh,
+                pr.base_rate AS base_rate_cents,
+                NULL AS base_rate_type,
+                NULL AS rate_type,
+                NULL AS rate_zoning_type,
+                NULL AS locations,
+                pr.grid_area_id,
+                pr.zip_code
+            FROM product_rates pr
+            JOIN products p ON pr.product_id = p.id
+            WHERE pr.avg_energy_price_cent_kwh IS NOT NULL
+            ORDER BY product_validity_from
+        """).fetchall()
     return [dict(r) for r in rows]
 
 
