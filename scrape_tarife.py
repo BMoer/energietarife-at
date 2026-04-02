@@ -146,16 +146,26 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    # Migration: detect old product_rates schema (has annual_gross_rate_cents
-    # but no energy_ct_kwh) and drop it so the new schema is created.
+    # Migration: detect old schema and drop/recreate affected tables.
     try:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(product_rates)").fetchall()}
-        if "annual_gross_rate_cents" in cols and "energy_ct_kwh" not in cols:
+        # product_rates: old schema has annual_gross_rate_cents, new has energy_ct_kwh
+        pr_cols = {r[1] for r in conn.execute("PRAGMA table_info(product_rates)").fetchall()}
+        if "annual_gross_rate_cents" in pr_cols and "energy_ct_kwh" not in pr_cols:
             logger.info("Migrating: dropping old product_rates table (pre-v2 schema)")
             conn.execute("DROP TABLE IF EXISTS product_rates")
             conn.commit()
     except Exception:
         pass  # Table doesn't exist yet — fine
+
+    try:
+        # products: old schema may lack supplier_name column
+        p_cols = {r[1] for r in conn.execute("PRAGMA table_info(products)").fetchall()}
+        if p_cols and "supplier_name" not in p_cols:
+            logger.info("Migrating: dropping old products table (missing supplier_name)")
+            conn.execute("DROP TABLE IF EXISTS products")
+            conn.commit()
+    except Exception:
+        pass
 
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS scrape_runs (
